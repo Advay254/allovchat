@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="robots" content="noindex">
+<title>Anonymous chat</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<div class="wrap narrow">
+<div id="start" class="card" hidden>
+<h1 id="lbl"></h1>
+<p>Send an anonymous message. The owner won't see who you are, and you don't need an account.</p>
+<form id="sf" class="row" style="flex-direction:column;align-items:stretch">
+<textarea id="sm" rows="4" placeholder="Write your message" required></textarea>
+<p id="serr" class="err" hidden></p>
+<button class="btn">Send anonymously</button>
+</form>
+<p class="fine">Anonymous to the owner, not to the site operator. Chats aren't end-to-end encrypted and are deleted automatically.</p>
+</div>
+<div id="chat" class="card chat" hidden></div>
+<div id="gone" class="card" hidden><h2>This link isn't active</h2><p class="fine">It may have been paused or removed by its owner.</p></div>
+<p class="fine" style="text-align:center"><a href="/">Make your own anonymous link</a></p>
+</div>
+<script src="/static/chat.js"></script>
+<script>
+const $=id=>document.getElementById(id);
+const slug=location.pathname.split('/')[2];
+function openChat(){$('start').hidden=true;$('chat').hidden=false;mountChat($('chat'),'/api/l/'+slug,'v',()=>location.reload())}
+$('sf').onsubmit=async e=>{e.preventDefault();$('serr').hidden=true;
+  try{await api('/api/l/'+slug+'/start',{message:$('sm').value});openChat()}
+  catch(er){$('serr').textContent=er.message;$('serr').hidden=false}};
+async function boot(){
+  try{const p=await api('/api/public');document.title=p.name+': anonymous chat'}catch(e){}
+  let info;try{info=await api('/api/l/'+slug+'/info')}catch(e){$('gone').hidden=false;return}
+  $('lbl').textContent=info.label;
+  try{await api('/api/l/'+slug+'/state');openChat()}catch(e){$('start').hidden=false}
+}
+boot();
+</script>
+</body>
+</html>

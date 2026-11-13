@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>allovchat: anonymous chat links</title>
+<meta name="description" content="Share a link, chat anonymously, and reveal your contact only when you both trust each other.">
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header class="top"><b id="brand">allovchat</b><span class="grow"></span><a class="btn ghost sm" href="/app" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a></header>
+<div class="wrap">
+<div id="banner" class="banner" hidden></div>
+<section class="hero">
+<h1>Chat anonymously. Reveal only when you trust each other.</h1>
+<p id="tag" class="fine" style="font-size:18px;max-width:560px;margin:0 auto 24px"></p>
+<a class="btn" href="/app" style="display:inline-flex;align-items:center;text-decoration:none">Create your link</a>
+</section>
+<section class="grid3">
+<div class="card"><h3>1. Create a link</h3><p class="fine">Make one link per topic, post or community. Pause or delete it any time.</p></div>
+<div class="card"><h3>2. Share it anywhere</h3><p class="fine">People who open it message you without an account. You accept or block each request.</p></div>
+<div class="card"><h3>3. Chat, then reveal</h3><p class="fine">When you both agree, share a WhatsApp number or handle once. It disappears after 24 hours.</p></div>
+</section>
+<section class="card">
+<h2>Built for privacy-minded people</h2>
+<p>Ask about a sensitive topic or product without handing strangers your real accounts. Visitors never sign up. You never see who they are. Nobody can spy on a profile you haven't shared.</p>
+<p class="fine">Honest note: you're anonymous to the other person, not to whoever runs this server. Chats aren't end-to-end encrypted and old chats are deleted automatically.</p>
+</section>
+<p class="fine" style="text-align:center">Free and open source (MIT) &middot; <a href="https://github.com/Advay254/allovchat">GitHub</a></p>
+</div>
+<script>
+fetch('/api/public').then(r=>r.json()).then(p=>{
+  document.getElementById('brand').textContent=p.name;
+  document.getElementById('tag').textContent=p.tagline;
+  document.title=p.name+': anonymous chat links';
+  if(p.announcement){const b=document.getElementById('banner');b.textContent=p.announcement;b.hidden=false}
+}).catch(()=>{});
+</script>
+</body>
+</html>
