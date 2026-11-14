@@ -24,7 +24,18 @@ ALTER TABLE links ADD COLUMN IF NOT EXISTS autoreply TEXT NOT NULL DEFAULT '';
 ALTER TABLE links ADD COLUMN IF NOT EXISTS quiet_start INT NOT NULL DEFAULT -1;
 ALTER TABLE links ADD COLUMN IF NOT EXISTS quiet_end INT NOT NULL DEFAULT -1;
 ALTER TABLE links ADD COLUMN IF NOT EXISTS tz INT NOT NULL DEFAULT 0;
+ALTER TABLE links ADD COLUMN IF NOT EXISTS ttl_hours INT NOT NULL DEFAULT 168;
 ALTER TABLE threads ADD COLUMN IF NOT EXISTS vid_hash TEXT NOT NULL DEFAULT '';
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS owner_alias TEXT NOT NULL DEFAULT '';
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS priv_o BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS priv_v BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+UPDATE threads SET expires_at = created_at + interval '7 days' WHERE expires_at IS NULL;
+ALTER TABLE threads ALTER COLUMN expires_at SET DEFAULT now() + interval '7 days';
+ALTER TABLE threads ALTER COLUMN expires_at SET NOT NULL;
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS account_id BIGINT REFERENCES owners(id) ON DELETE SET NULL;
+CREATE INDEX IF NOT EXISTS threads_exp ON threads(expires_at);
+CREATE INDEX IF NOT EXISTS threads_acct ON threads(account_id);
 CREATE TABLE IF NOT EXISTS blocks(owner_id BIGINT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, vid_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(owner_id, vid_hash));
 CREATE TABLE IF NOT EXISTS audit(id BIGSERIAL PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
 CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, kind TEXT NOT NULL, owner_id BIGINT REFERENCES owners(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
@@ -59,13 +70,13 @@ var settingMeta = []struct{ Key, Label, Kind string }{
 }
 
 var defaults = map[string]string{
-	"site_name": "allovchat", "tagline": "Chat anonymously. Share your contact only when you both trust each other.",
+	"site_name": "allovchat", "tagline": "Meet without revealing. Connect without pressure.",
 	"announcement": "", "registration_open": "1", "maintenance": "0", "max_msg_len": "1000",
 	"retention_days": "7", "max_links_per_owner": "5", "msgs_per_min": "30",
 	"banned_words": "", "turnstile_site": "", "turnstile_secret": "",
 }
 
-var limits = map[string][2]int{"max_msg_len": {1, 5000}, "retention_days": {1, 365}, "max_links_per_owner": {1, 100}, "msgs_per_min": {1, 300}}
+var limits = map[string][2]int{"max_msg_len": {1, 5000}, "retention_days": {1, 7}, "max_links_per_owner": {1, 100}, "msgs_per_min": {1, 300}}
 
 type Settings struct {
 	mu sync.RWMutex
@@ -116,12 +127,14 @@ func (a *App) audit(ctx context.Context, action, detail string) {
 	a.exec(ctx, "audit", `INSERT INTO audit(action,detail) VALUES($1,$2)`, action, detail)
 }
 
-// janitor deletes inactive chats and expired sessions, and expires revealed contacts.
+// janitor enforces the hard 7 day limit (and any shorter per-chat limit), removes inactive chats,
+// expires revealed contacts and clears old sessions.
 func (a *App) janitor(ctx context.Context) {
-	t := time.NewTicker(time.Hour)
+	t := time.NewTicker(10 * time.Minute)
 	defer t.Stop()
 	for {
-		a.exec(ctx, "janitor chats", `DELETE FROM threads WHERE last_at < now() - make_interval(days => $1::int)`, a.set.num("retention_days"))
+		a.exec(ctx, "janitor expired", `DELETE FROM threads WHERE expires_at < now()`)
+		a.exec(ctx, "janitor inactive", `DELETE FROM threads WHERE last_at < now() - make_interval(days => $1::int)`, a.set.num("retention_days"))
 		a.exec(ctx, "janitor contacts", `UPDATE threads SET owner_contact='', visitor_contact='' WHERE revealed_at < now() - interval '24 hours' AND (owner_contact<>'' OR visitor_contact<>'')`)
 		a.exec(ctx, "janitor audit", `DELETE FROM audit WHERE created_at < now() - interval '180 days'`)
 		a.exec(ctx, "janitor sessions", `DELETE FROM sessions WHERE expires_at < now()`)

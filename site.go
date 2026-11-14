@@ -10,6 +10,7 @@ import (
 	"image/color"
 	"image/png"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,9 +107,9 @@ var posts = []post{
 	},
 }
 
-const aboutMD = `Private chats from a link. Post your link anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
+const aboutMD = `Meet without revealing. Connect without pressure. Post your link anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block, and every person gets a fresh temporary name for each chat. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
 
-Chats are not end-to-end encrypted. Being anonymous to the person you are talking to is not the same as being untraceable. Inactive chats are deleted automatically.
+A conversation can last at most 7 days. People are warned 12 hours before it is deleted, and either person can end it sooner. Chats are encrypted in transit but not end-to-end encrypted, and being anonymous to the person you are talking to is not the same as being untraceable.
 
 The code is open source under the MIT license.`
 
@@ -198,7 +199,7 @@ func (a *App) siteRoutes(mux *http.ServeMux) {
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {
 	site := a.set.get("site_name")
-	d := a.pd(r, "/", site+": private chats from a link", "Share a link, chat without handing over your real accounts, and swap contact details only when you both agree.")
+	d := a.pd(r, "/", site+": meet without revealing", "Meet without revealing. Connect without pressure. Share a link, chat first, and swap contact details later, only when you both agree.")
 	d.LD = ld(map[string]any{"@context": "https://schema.org", "@graph": []any{
 		map[string]any{"@type": "WebSite", "name": site, "url": d.Base},
 		map[string]any{"@type": "Organization", "name": site, "url": d.Base, "logo": d.Base + "/icons/512.png"},
@@ -279,7 +280,7 @@ func (a *App) robots(w http.ResponseWriter, r *http.Request) {
 func (a *App) llms(w http.ResponseWriter, r *http.Request) {
 	b, site := a.base(r), a.set.get("site_name")
 	var s strings.Builder
-	fmt.Fprintf(&s, "# %s\n\n> %s\n\nPrivate chats from a link. Visitors write without an account, the owner approves each chat, and contact details are shared only when both people agree.\n\n## Pages\n\n", site, a.set.get("tagline"))
+	fmt.Fprintf(&s, "# %s\n\n> %s\n\nPrivate chats from a link. Guests write without an account, the owner approves each chat, every person gets a fresh temporary name per chat, and contact details are shared only when both people agree. Chats are deleted after 7 days at most.\n\n## Pages\n\n", site, a.set.get("tagline"))
 	fmt.Fprintf(&s, "- [About](%s/about): what it is, why it exists, what it does not protect\n- [Blog](%s/blog): practical notes on private conversations\n\n## Posts\n\n", b, b)
 	for _, p := range posts {
 		fmt.Fprintf(&s, "- [%s](%s/blog/%s): %s\n", p.Title, b, p.Slug, p.Desc)
@@ -304,16 +305,16 @@ func (a *App) manifest(w http.ResponseWriter, r *http.Request) {
 	site := a.set.get("site_name")
 	w.Header().Set("Content-Type", "application/manifest+json")
 	json.NewEncoder(w).Encode(map[string]any{"name": site, "short_name": site, "description": a.set.get("tagline"), "start_url": "/app", "scope": "/", "display": "standalone",
-		"background_color": "#F6F1E7", "theme_color": "#F6F1E7",
+		"background_color": "#0B1220", "theme_color": "#0B1220",
 		"icons": []any{
 			map[string]any{"src": "/icons/192.png", "sizes": "192x192", "type": "image/png"},
 			map[string]any{"src": "/icons/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
 		}})
 }
 
-// ---------- placeholder brand assets, drawn in code until a real logo exists ----------
+// ---------- brand assets: the symbol is drawn in code so the icons and share image always match the logo ----------
 
-const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="14" fill="#F6F1E7"/><rect x="10" y="10" width="30" height="27" rx="9" fill="#C8401B"/><rect x="22" y="22" width="32" height="30" rx="10" fill="#231F20"/><circle cx="31" cy="37" r="2.6" fill="#F6F1E7"/><circle cx="38" cy="37" r="2.6" fill="#F6F1E7"/><circle cx="45" cy="37" r="2.6" fill="#F6F1E7"/></svg>`
+const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#0B1220"/><g transform="translate(6 16.8) scale(.52)"><path fill="#2563FF" fill-rule="evenodd" d="M28 4a26 26 0 1 0 0 52 26 26 0 0 0 0-52zm0 14a12 12 0 1 1 0 24 12 12 0 0 1 0-24z"/><path fill="#2563FF" d="M36 48l16 10-6-16z"/><path fill="#fff" fill-rule="evenodd" d="M70 4A26 26 0 0 0 44 30 26 26 0 0 0 70 56H96V30A26 26 0 0 0 70 4zM70 17a11 11 0 1 0 0 22 11 11 0 0 0 0-22z"/><rect x="64" y="22" width="12" height="9" rx="4.5" fill="#fff"/><path fill="#fff" d="M65 30h5l-5 6z"/></g></svg>`
 
 func (a *App) favicon(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "image/svg+xml")
@@ -322,10 +323,10 @@ func (a *App) favicon(w http.ResponseWriter, r *http.Request) {
 }
 
 var (
-	cPaper = color.RGBA{0xF6, 0xF1, 0xE7, 255}
-	cInk   = color.RGBA{0x23, 0x1F, 0x20, 255}
-	cTom   = color.RGBA{0xC8, 0x40, 0x1B, 255}
-	cLine  = color.RGBA{0xE3, 0xDA, 0xC8, 255}
+	cNavy  = color.RGBA{0x0B, 0x12, 0x20, 255}
+	cBlue  = color.RGBA{0x25, 0x63, 0xFF, 255}
+	cWhite = color.RGBA{255, 255, 255, 255}
+	cSlate = color.RGBA{0x16, 0x23, 0x38, 255}
 	imgs   sync.Map
 )
 
@@ -350,13 +351,74 @@ func rrect(img *image.RGBA, x0, y0, x1, y1, r int, c color.RGBA) {
 	}
 }
 
-func drawLogo(img *image.RGBA, ox, oy, s int) {
-	rrect(img, ox, oy, ox+s*68/100, oy+s*62/100, s*18/100, cTom)
-	rrect(img, ox+s*30/100, oy+s*30/100, ox+s, oy+s*88/100, s*20/100, cInk)
-	r := s * 45 / 1000
-	for i := 0; i < 3; i++ {
-		cx, cy := ox+s*(50+i*15)/100, oy+s*59/100
-		rrect(img, cx-r, cy-r, cx+r, cy+r, r, cPaper)
+func blendPx(img *image.RGBA, x, y int, c color.RGBA, a float64) {
+	if !image.Pt(x, y).In(img.Bounds()) || a <= 0 {
+		return
+	}
+	d := img.RGBAAt(x, y)
+	mix := func(s, t uint8) uint8 { return uint8(float64(s)*(1-a) + float64(t)*a) }
+	img.SetRGBA(x, y, color.RGBA{mix(d.R, c.R), mix(d.G, c.G), mix(d.B, c.B), 255})
+}
+
+// glow paints a soft blue radial light.
+func glow(img *image.RGBA, cx, cy, radius int, c color.RGBA, strength float64) {
+	for y := cy - radius; y < cy+radius; y++ {
+		for x := cx - radius; x < cx+radius; x++ {
+			d := math.Hypot(float64(x-cx), float64(y-cy)) / float64(radius)
+			if d < 1 {
+				blendPx(img, x, y, c, strength*(1-d)*(1-d))
+			}
+		}
+	}
+}
+
+func tri(px, py, ax, ay, bx, by, cx, cy float64) bool {
+	d1 := (px-bx)*(ay-by) - (ax-bx)*(py-by)
+	d2 := (px-cx)*(by-cy) - (bx-cx)*(py-cy)
+	d3 := (px-ax)*(cy-ay) - (cx-ax)*(py-ay)
+	return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
+}
+
+func roundRectHit(px, py, x0, y0, x1, y1, r float64) bool {
+	if px < x0 || px > x1 || py < y0 || py > y1 {
+		return false
+	}
+	cx, cy := math.Max(x0+r, math.Min(px, x1-r)), math.Max(y0+r, math.Min(py, y1-r))
+	return math.Hypot(px-cx, py-cy) <= r
+}
+
+// markAt returns the colour of the brand symbol at a point on its 100 x 60 design grid.
+// Two overlapping chat bubbles: a blue ring on the left, a solid bubble with a small speech bubble cut-out on the right.
+func markAt(x, y float64, right color.RGBA) (color.RGBA, bool) {
+	if math.Hypot(x-70, y-30) <= 26 || (x >= 70 && x <= 96 && y >= 30 && y <= 56) {
+		if math.Hypot(x-70, y-28) > 11 || roundRectHit(x, y, 64, 22, 76, 31, 4.5) || tri(x, y, 65, 30, 65, 36, 70, 30) {
+			return right, true
+		}
+	}
+	d := math.Hypot(x-28, y-30)
+	if (d >= 12 && d <= 26) || tri(x, y, 36, 48, 52, 58, 46, 42) {
+		return cBlue, true
+	}
+	return color.RGBA{}, false
+}
+
+func paintMark(img *image.RGBA, ox, oy int, s float64, right color.RGBA) {
+	w, h := int(100*s)+1, int(60*s)+1
+	for py := 0; py < h; py++ {
+		for px := 0; px < w; px++ {
+			var r, g, b, n float64
+			for sy := 0; sy < 2; sy++ {
+				for sx := 0; sx < 2; sx++ {
+					x, y := (float64(px)+0.25+0.5*float64(sx))/s, (float64(py)+0.25+0.5*float64(sy))/s
+					if c, ok := markAt(x, y, right); ok {
+						r, g, b, n = r+float64(c.R), g+float64(c.G), b+float64(c.B), n+1
+					}
+				}
+			}
+			if n > 0 {
+				blendPx(img, ox+px, oy+py, color.RGBA{uint8(r / n), uint8(g / n), uint8(b / n), 255}, n/4)
+			}
+		}
 	}
 }
 
@@ -366,7 +428,7 @@ func renderPNG(key string, w, h int, draw func(*image.RGBA)) []byte {
 	}
 	img := image.NewRGBA(image.Rect(0, 0, w, h))
 	for i := 0; i < len(img.Pix); i += 4 {
-		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = cPaper.R, cPaper.G, cPaper.B, 255
+		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = cNavy.R, cNavy.G, cNavy.B, 255
 	}
 	draw(img)
 	var buf bytes.Buffer
@@ -382,12 +444,13 @@ func servePNG(w http.ResponseWriter, data []byte) {
 }
 
 func (a *App) ogImage(w http.ResponseWriter, r *http.Request) {
-	servePNG(w, renderPNG("og", 1200, 630, func(img *image.RGBA) {
-		drawLogo(img, 130, 135, 360)
-		rrect(img, 600, 200, 1070, 238, 19, cLine)
-		rrect(img, 600, 270, 990, 308, 19, cLine)
-		rrect(img, 600, 340, 860, 378, 19, cLine)
-		rrect(img, 600, 440, 820, 500, 30, cTom)
+	servePNG(w, renderPNG("og2", 1200, 630, func(img *image.RGBA) {
+		glow(img, 1000, 140, 560, cBlue, 0.42)
+		paintMark(img, 110, 160, 5.2, cWhite)
+		rrect(img, 700, 210, 1090, 246, 18, cSlate)
+		rrect(img, 700, 278, 990, 314, 18, cSlate)
+		rrect(img, 700, 346, 880, 382, 18, cSlate)
+		rrect(img, 700, 440, 900, 496, 28, cBlue)
 	}))
 }
 
@@ -397,9 +460,9 @@ func (a *App) icon(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	data := renderPNG("icon"+strconv.Itoa(n), n, n, func(img *image.RGBA) {
-		l := n * 62 / 100
-		drawLogo(img, (n-l)/2, (n-l*88/100)/2, l)
+	data := renderPNG("icon2"+strconv.Itoa(n), n, n, func(img *image.RGBA) {
+		s := float64(n) * 0.6 / 100
+		paintMark(img, int((float64(n)-100*s)/2), int((float64(n)-60*s)/2), s, cWhite)
 	})
 	servePNG(w, data)
 }

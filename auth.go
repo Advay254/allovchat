@@ -114,7 +114,7 @@ func (a *App) endSession(r *http.Request, cookie string) {
 	}
 }
 
-// ownerID returns the signed-in owner's id, or 0.
+// ownerID returns the signed-in account's id, or 0.
 func (a *App) ownerID(r *http.Request) int64 {
 	c, err := r.Cookie("os")
 	if err != nil || len(c.Value) != 48 {
@@ -216,6 +216,16 @@ func (f *FailLimiter) wait(key string, limit int) time.Duration {
 	return 0
 }
 
+// count returns the failures recorded for key in the current window.
+func (f *FailLimiter) count(key string) int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if r := f.m[key]; r != nil && time.Since(r.start) <= failWindow {
+		return r.n
+	}
+	return 0
+}
+
 func (f *FailLimiter) fail(keys ...string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -244,10 +254,12 @@ func (f *FailLimiter) reset(keys ...string) {
 	}
 }
 
-// loginWait checks the three login limits: 5 failures per account+IP pair, and 20 per account or per IP overall.
+// loginWait locks a sign-in after 5 failures from the same account and IP, or 20 from one IP.
+// The per-account counter (acct) never locks anyone out on its own, so a stranger can't lock a real person out
+// from their own devices. Callers use acctFailures to ask for a human check instead.
 func (a *App) loginWait(user, ip string) (pair, acct, byIP string, wait time.Duration) {
 	pair, acct, byIP = "p:"+user+"|"+ip, "a:"+user, "i:"+ip
-	wait = max(a.fails.wait(pair, 5), a.fails.wait(acct, 20), a.fails.wait(byIP, 20))
+	wait = max(a.fails.wait(pair, 5), a.fails.wait(byIP, 20))
 	return
 }
 
