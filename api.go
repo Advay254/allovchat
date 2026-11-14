@@ -100,13 +100,15 @@ var (
 	userRe  = regexp.MustCompile(`^[a-z0-9_]{3,24}$`)
 	adjs    = []string{"Quiet", "Calm", "Bright", "Swift", "Gentle", "Brave", "Clever", "Lucky", "Misty", "Sunny", "Witty", "Cosmic"}
 	animals = []string{"Fox", "Otter", "Heron", "Panda", "Falcon", "Koala", "Lynx", "Owl", "Seal", "Whale", "Gecko", "Robin"}
+
+	reportCodes = map[string]string{"spam": "Spam or ads", "harassment": "Harassment or abuse", "scam": "Scam or asking for money", "explicit": "Sexual or explicit content", "other": "Something else"}
 )
 
 func randAlias() string {
 	return adjs[mrand.IntN(len(adjs))] + " " + animals[mrand.IntN(len(animals))]
 }
 
-const activeLink = `SELECT l.id, l.label FROM links l JOIN owners o ON o.id=l.owner_id WHERE l.slug=$1 AND l.active AND NOT o.disabled`
+const activeLink = `SELECT l.id, l.label, l.welcome, l.about FROM links l JOIN owners o ON o.id=l.owner_id WHERE l.slug=$1 AND l.active AND NOT o.disabled`
 
 func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/public", a.publicInfo)
@@ -125,11 +127,17 @@ func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/l/{slug}/info", a.info)
 	mux.HandleFunc("POST /api/l/{slug}/start", a.start)
 	a.threadRoutes(mux, "/api/l/{slug}", a.visitorThread)
+	a.featureRoutes(mux)
 }
 
 func (a *App) publicInfo(w http.ResponseWriter, r *http.Request) {
+	site := ""
+	if a.set.get("turnstile_secret") != "" {
+		site = a.set.get("turnstile_site")
+	}
 	jsonOut(w, 200, map[string]any{"name": a.set.get("site_name"), "tagline": a.set.get("tagline"),
-		"announcement": a.set.get("announcement"), "registration_open": a.set.get("registration_open") == "1", "base_url": a.cfg.BaseURL})
+		"announcement": a.set.get("announcement"), "registration_open": a.set.get("registration_open") == "1",
+		"base_url": a.cfg.BaseURL, "turnstile_site": site})
 }
 
 // ---------- owners ----------
@@ -221,7 +229,7 @@ func (a *App) listLinks(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	out, err := a.rowsOut(r.Context(), `SELECT l.id, l.slug, l.label, l.active, (SELECT count(*) FROM threads t WHERE t.link_id=l.id) AS chats FROM links l WHERE l.owner_id=$1 ORDER BY l.id DESC`, id)
+	out, err := a.rowsOut(r.Context(), `SELECT l.id, l.slug, l.label, l.active, l.welcome, l.about, l.autoreply, l.quiet_start, l.quiet_end, (SELECT count(*) FROM threads t WHERE t.link_id=l.id) AS chats FROM links l WHERE l.owner_id=$1 ORDER BY l.id DESC`, id)
 	if err != nil {
 		fail(w, 500, "Server error")
 		return
@@ -291,7 +299,11 @@ func (a *App) ownerAct(to string) http.HandlerFunc {
 		if !ok {
 			return
 		}
-		a.db.Exec(r.Context(), `UPDATE threads SET status=$2::text WHERE id=$1 AND ($2::text='blocked' OR status='pending')`, tid, to)
+		ctx := r.Context()
+		a.db.Exec(ctx, `UPDATE threads SET status=$2::text WHERE id=$1 AND ($2::text='blocked' OR status='pending')`, tid, to)
+		if to == "blocked" {
+			a.db.Exec(ctx, `INSERT INTO blocks(owner_id, vid_hash) SELECT l.owner_id, t.vid_hash FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1 AND t.vid_hash<>'' ON CONFLICT DO NOTHING`, tid)
+		}
 		a.hub.pub(tid, map[string]any{"t": "status", "v": to})
 		jsonOut(w, 200, map[string]any{"ok": true})
 	}
@@ -347,12 +359,12 @@ func (a *App) threadRoutes(mux *http.ServeMux, prefix string, res resolver) {
 
 func (a *App) info(w http.ResponseWriter, r *http.Request) {
 	var id int64
-	var label string
-	if a.db.QueryRow(r.Context(), activeLink, r.PathValue("slug")).Scan(&id, &label) != nil {
+	var label, welcome, about string
+	if a.db.QueryRow(r.Context(), activeLink, r.PathValue("slug")).Scan(&id, &label, &welcome, &about) != nil {
 		fail(w, 404, "This link isn't active")
 		return
 	}
-	jsonOut(w, 200, map[string]any{"label": label})
+	jsonOut(w, 200, map[string]any{"label": label, "welcome": welcome, "about": about})
 }
 
 func (a *App) start(w http.ResponseWriter, r *http.Request) {
@@ -361,7 +373,7 @@ func (a *App) start(w http.ResponseWriter, r *http.Request) {
 		fail(w, 429, "Too many new chats. Try again later")
 		return
 	}
-	var in struct{ Message string }
+	var in struct{ Message, Turnstile string }
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -371,26 +383,41 @@ func (a *App) start(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
 		return
 	}
+	ctx := r.Context()
 	var lid int64
-	var label string
-	if a.db.QueryRow(r.Context(), activeLink, slug).Scan(&lid, &label) != nil {
+	var label, welcome, about string
+	if a.db.QueryRow(ctx, activeLink, slug).Scan(&lid, &label, &welcome, &about) != nil {
 		fail(w, 404, "This link isn't active")
+		return
+	}
+	vid := a.vidHash(w, r)
+	var bl int
+	if a.db.QueryRow(ctx, `SELECT 1 FROM blocks b JOIN links l ON l.owner_id=b.owner_id WHERE l.id=$1 AND b.vid_hash=$2`, lid, vid).Scan(&bl) == nil {
+		fail(w, 403, "This chat isn't available")
+		return
+	}
+	if !a.turnstileOK(r, in.Turnstile) {
+		fail(w, 400, "Please complete the human check and try again")
+		return
+	}
+	if a.banned(m) {
+		fail(w, 400, "That message isn't allowed here")
 		return
 	}
 	if c, err := r.Cookie("v_" + slug); err == nil {
 		var n int
-		if a.db.QueryRow(r.Context(), `SELECT 1 FROM threads WHERE link_id=$1 AND token_hash=$2`, lid, sha256hex(c.Value)).Scan(&n) == nil {
+		if a.db.QueryRow(ctx, `SELECT 1 FROM threads WHERE link_id=$1 AND token_hash=$2`, lid, sha256hex(c.Value)).Scan(&n) == nil {
 			fail(w, 409, "You already have a chat on this link")
 			return
 		}
 	}
 	tok := randHex(16)
 	var tid int64
-	if a.db.QueryRow(r.Context(), `INSERT INTO threads(link_id,token_hash,alias) VALUES($1,$2,$3) RETURNING id`, lid, sha256hex(tok), randAlias()).Scan(&tid) != nil {
+	if a.db.QueryRow(ctx, `INSERT INTO threads(link_id,token_hash,alias,vid_hash) VALUES($1,$2,$3,$4) RETURNING id`, lid, sha256hex(tok), randAlias(), vid).Scan(&tid) != nil {
 		fail(w, 500, "Server error")
 		return
 	}
-	a.db.Exec(r.Context(), `INSERT INTO messages(thread_id,side,body) VALUES($1,'v',$2)`, tid, m)
+	a.db.Exec(ctx, `INSERT INTO messages(thread_id,side,body) VALUES($1,'v',$2)`, tid, m)
 	a.setCookie(w, "v_"+slug, tok, 30*86400, false)
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
@@ -422,8 +449,18 @@ func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side stri
 	if !done || time.Since(*rev) > 24*time.Hour {
 		contact = ""
 	}
-	jsonOut(w, 200, map[string]any{"peer": peer, "label": label, "status": status, "side": side, "messages": msgs,
-		"reveal": map[string]any{"you": you, "they": they, "done": done, "contact": contact}})
+	out := map[string]any{"peer": peer, "label": label, "status": status, "side": side, "messages": msgs,
+		"reveal": map[string]any{"you": you, "they": they, "done": done, "contact": contact}}
+	if side == "v" {
+		slug := r.PathValue("slug")
+		if c, err := r.Cookie("v_" + slug); err == nil {
+			out["resume"] = "/r/" + slug + "/" + c.Value
+		}
+		if status == "pending" {
+			out["auto"] = a.autoReply(ctx, tid)
+		}
+	}
+	jsonOut(w, 200, out)
 }
 
 func (a *App) stream(w http.ResponseWriter, r *http.Request, tid int64, side string) {
@@ -465,6 +502,10 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 	mx := a.set.num("max_msg_len")
 	if b == "" || utf8.RuneCountInString(b) > mx {
 		fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
+		return
+	}
+	if a.banned(b) {
+		fail(w, 400, "That message isn't allowed here")
 		return
 	}
 	if !a.rl.allow("m:"+strconv.FormatInt(tid, 10)+side, a.set.num("msgs_per_min"), time.Minute) {
@@ -542,19 +583,19 @@ func (a *App) report(w http.ResponseWriter, r *http.Request, tid int64, side str
 		fail(w, 429, "Too many reports. Try again later")
 		return
 	}
-	var in struct{ Reason string }
+	var in struct{ Code, Note string }
 	if !readJSON(w, r, &in) {
 		return
 	}
-	re := []rune(strings.TrimSpace(in.Reason))
-	if len(re) == 0 {
-		fail(w, 400, "Tell us what happened")
+	reason, ok := reportCodes[in.Code]
+	if !ok {
+		fail(w, 400, "Pick a reason")
 		return
 	}
-	if len(re) > 300 {
-		re = re[:300]
+	if n := clip(in.Note, 300); n != "" {
+		reason += ": " + n
 	}
-	a.db.Exec(r.Context(), `INSERT INTO reports(thread_id,side,reason) VALUES($1,$2,$3)`, tid, side, string(re))
+	a.db.Exec(r.Context(), `INSERT INTO reports(thread_id,side,reason) VALUES($1,$2,$3)`, tid, side, reason)
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 

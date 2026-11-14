@@ -17,7 +17,16 @@ CREATE INDEX IF NOT EXISTS threads_tok ON threads(token_hash);
 CREATE TABLE IF NOT EXISTS messages(id BIGSERIAL PRIMARY KEY, thread_id BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, side TEXT NOT NULL, body TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), read_at TIMESTAMPTZ);
 CREATE INDEX IF NOT EXISTS messages_thread ON messages(thread_id, id);
 CREATE TABLE IF NOT EXISTS reports(id BIGSERIAL PRIMARY KEY, thread_id BIGINT NOT NULL REFERENCES threads(id) ON DELETE CASCADE, side TEXT NOT NULL, reason TEXT NOT NULL, resolved BOOLEAN NOT NULL DEFAULT false, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
-CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);`
+CREATE TABLE IF NOT EXISTS settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);
+ALTER TABLE links ADD COLUMN IF NOT EXISTS welcome TEXT NOT NULL DEFAULT '';
+ALTER TABLE links ADD COLUMN IF NOT EXISTS about TEXT NOT NULL DEFAULT '';
+ALTER TABLE links ADD COLUMN IF NOT EXISTS autoreply TEXT NOT NULL DEFAULT '';
+ALTER TABLE links ADD COLUMN IF NOT EXISTS quiet_start INT NOT NULL DEFAULT -1;
+ALTER TABLE links ADD COLUMN IF NOT EXISTS quiet_end INT NOT NULL DEFAULT -1;
+ALTER TABLE links ADD COLUMN IF NOT EXISTS tz INT NOT NULL DEFAULT 0;
+ALTER TABLE threads ADD COLUMN IF NOT EXISTS vid_hash TEXT NOT NULL DEFAULT '';
+CREATE TABLE IF NOT EXISTS blocks(owner_id BIGINT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, vid_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(owner_id, vid_hash));
+CREATE TABLE IF NOT EXISTS audit(id BIGSERIAL PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());`
 
 func (a *App) migrate(ctx context.Context) error {
 	for _, s := range strings.Split(schema, ";") {
@@ -42,12 +51,16 @@ var settingMeta = []struct{ Key, Label, Kind string }{
 	{"retention_days", "Delete chats after N days of inactivity", "num"},
 	{"max_links_per_owner", "Max links per owner", "num"},
 	{"msgs_per_min", "Messages per minute per person", "num"},
+	{"banned_words", "Banned words (separate with commas or new lines)", "area"},
+	{"turnstile_site", "Cloudflare Turnstile site key", "text"},
+	{"turnstile_secret", "Cloudflare Turnstile secret key", "secret"},
 }
 
 var defaults = map[string]string{
 	"site_name": "allovchat", "tagline": "Chat anonymously. Share your contact only when you both trust each other.",
 	"announcement": "", "registration_open": "1", "maintenance": "0", "max_msg_len": "1000",
 	"retention_days": "7", "max_links_per_owner": "5", "msgs_per_min": "30",
+	"banned_words": "", "turnstile_site": "", "turnstile_secret": "",
 }
 
 var limits = map[string][2]int{"max_msg_len": {1, 5000}, "retention_days": {1, 365}, "max_links_per_owner": {1, 100}, "msgs_per_min": {1, 300}}
@@ -95,6 +108,10 @@ func (a *App) saveSetting(ctx context.Context, k, v string) {
 	a.db.Exec(ctx, `INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`, k, v)
 }
 
+func (a *App) audit(ctx context.Context, action, detail string) {
+	a.db.Exec(ctx, `INSERT INTO audit(action,detail) VALUES($1,$2)`, action, detail)
+}
+
 // janitor deletes inactive chats and expires revealed contacts.
 func (a *App) janitor(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
@@ -102,6 +119,7 @@ func (a *App) janitor(ctx context.Context) {
 	for {
 		a.db.Exec(ctx, `DELETE FROM threads WHERE last_at < now() - make_interval(days => $1::int)`, a.set.num("retention_days"))
 		a.db.Exec(ctx, `UPDATE threads SET owner_contact='', visitor_contact='' WHERE revealed_at < now() - interval '24 hours' AND (owner_contact<>'' OR visitor_contact<>'')`)
+		a.db.Exec(ctx, `DELETE FROM audit WHERE created_at < now() - interval '180 days'`)
 		select {
 		case <-ctx.Done():
 			return

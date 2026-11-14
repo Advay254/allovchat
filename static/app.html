@@ -6,41 +6,44 @@
 <meta name="robots" content="noindex">
 <title>Inbox</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/ui.css">
 </head>
 <body>
 <div id="auth" class="wrap narrow" hidden>
 <div class="card">
 <h1 id="atitle">Sign in</h1>
 <form id="af" class="row" style="flex-direction:column;align-items:stretch">
-<label>Username<input id="au" autocomplete="username" required></label>
-<label>Password<input id="ap" type="password" autocomplete="current-password" required></label>
-<p id="aerr" class="err" hidden></p>
+<label for="au">Username</label><input id="au" autocomplete="username" required>
+<label for="ap">Password</label><input id="ap" type="password" autocomplete="current-password" required>
+<p id="aerr" class="err" role="alert" hidden></p>
 <button class="btn" id="abtn">Sign in</button>
 </form>
 <p class="fine"><button id="switch" class="linkbtn">Create an account</button> &middot; <a href="/">Home</a></p>
 </div>
 </div>
 <div id="app" hidden>
-<header class="top"><b id="brand"></b><span class="grow"></span><span id="who" class="fine"></span><button id="out" class="btn ghost sm">Sign out</button></header>
+<header class="top"><b id="brand"></b><span class="grow"></span><button id="notif" class="btn ghost sm" hidden>Turn on alerts</button><span id="who" class="fine"></span><button id="out" class="btn ghost sm">Sign out</button></header>
 <div class="wrap">
-<div id="banner" class="banner" hidden></div>
+<div id="banner" class="banner" role="status" hidden></div>
 <div class="app">
 <aside>
-<section class="card"><h2>Your links</h2>
-<form id="lf" class="row"><input id="ll" placeholder="Label, e.g. Used laptop post" maxlength="60" required style="flex:1"><button class="btn">Create</button></form>
-<p id="lerr" class="err" hidden></p>
+<section class="card" aria-labelledby="lh"><h2 id="lh">Your links</h2>
+<form id="lf" class="row"><label class="sr" for="ll">New link label</label><input id="ll" placeholder="Label, e.g. Used laptop post" maxlength="60" required style="flex:1"><button class="btn">Create</button></form>
+<p id="lerr" class="err" role="alert" hidden></p>
 <div id="links"></div></section>
-<section class="card"><h2>Inbox</h2><div id="threads"></div></section>
+<section class="card" aria-labelledby="ih"><h2 id="ih">Inbox</h2><div id="threads"></div><div id="blocks" class="fine"></div></section>
 </aside>
 <main id="panel" class="card chat"><p class="fine" style="padding:16px">Select a chat to start.</p></main>
 </div>
 </div>
 </div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/qrcodejs/1.0.0/qrcode.min.js"></script>
+<script src="/static/ui.js"></script>
 <script src="/static/chat.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
-let pub={},cur=null,mode='login';
+let pub={},cur=null,mode='login',last=null;
 const origin=()=>pub.base_url||location.origin;
 function setMode(m){mode=m;$('atitle').textContent=m==='login'?'Sign in':'Create account';$('abtn').textContent=m==='login'?'Sign in':'Create account';$('switch').textContent=m==='login'?'Create an account':'I already have an account';$('ap').autocomplete=m==='login'?'current-password':'new-password'}
 $('switch').onclick=()=>setMode(mode==='login'?'register':'login');
@@ -51,6 +54,49 @@ $('out').onclick=async()=>{await api('/api/logout',{});location.reload()};
 $('lf').onsubmit=async e=>{e.preventDefault();$('lerr').hidden=true;
   try{await api('/api/links',{label:$('ll').value});$('ll').value='';loadLinks()}
   catch(er){$('lerr').textContent=er.message;$('lerr').hidden=false}};
+$('notif').onclick=async()=>{await Notification.requestPermission();$('notif').hidden=true};
+
+function shareSheet(l){
+  const u=origin()+'/l/'+l.slug;
+  sheet('Share your link',(box,close)=>{
+    const qr=el('div','qr');box.append(qr);
+    new QRCode(qr,{text:u,width:200,height:200,correctLevel:QRCode.CorrectLevel.M});
+    box.append(el('p','fine',u));
+    const row=el('div','row'),cp=el('button','btn','Copy link'),dl=el('button','btn ghost','Download share card'),x=el('button','linkbtn','Close');
+    cp.onclick=async()=>{await navigator.clipboard.writeText(u);cp.textContent='Copied \u2713'};
+    dl.onclick=()=>shareCard(l,u,qr);x.onclick=close;
+    row.append(cp,dl,x);box.append(row);
+  });
+}
+function shareCard(l,u,qr){
+  const c=document.createElement('canvas');c.width=1080;c.height=1350;const g=c.getContext('2d');
+  g.fillStyle='#F7F5FF';g.fillRect(0,0,1080,1350);g.textAlign='center';
+  g.fillStyle='#1B1530';g.font='600 64px system-ui, sans-serif';g.fillText('Chat with me anonymously',540,260);
+  g.fillStyle='#5B5675';g.font='400 40px system-ui, sans-serif';g.fillText(l.label.slice(0,40),540,340);
+  g.fillStyle='#fff';g.fillRect(290,430,500,500);g.drawImage(qr.querySelector('canvas'),315,455,450,450);
+  g.fillStyle='#1B1530';g.font='500 36px system-ui, sans-serif';g.fillText(u.replace(/^https?:\/\//,''),540,1030);
+  g.fillStyle='#5B5675';g.font='400 32px system-ui, sans-serif';g.fillText('No account needed. Your real profile stays private.',540,1110);
+  const a=document.createElement('a');a.download='share-card.png';a.href=c.toDataURL('image/png');a.click();
+}
+function editSheet(l){
+  sheet('Edit link',(box,close)=>{
+    const f=el('form','stack');
+    const mk=(lab,inp)=>{const w=el('label',null,lab);w.append(inp);f.append(w);return inp};
+    const label=mk('Label',el('input'));label.value=l.label;label.maxLength=60;label.required=true;
+    const welcome=mk('Welcome message visitors see',el('textarea'));welcome.value=l.welcome;welcome.rows=3;welcome.maxLength=280;
+    const about=mk('What you are chatting about (optional)',el('input'));about.value=l.about;about.maxLength=120;
+    const auto=mk('Auto-reply for new requests (optional)',el('input'));auto.value=l.autoreply;auto.maxLength=200;
+    const hrs=()=>{const s=el('select');s.append(new Option('Off',-1));for(let h=0;h<24;h++)s.append(new Option(String(h).padStart(2,'0')+':00',h));return s};
+    const qs=mk('Quiet hours start',hrs());qs.value=l.quiet_start;
+    const qe=mk('Quiet hours end',hrs());qe.value=l.quiet_end;
+    const err=el('p','err');err.hidden=true;err.setAttribute('role','alert');f.append(err);
+    const row=el('div','row'),ok=el('button','btn','Save'),x=el('button','linkbtn','Cancel');ok.type='submit';x.type='button';x.onclick=close;row.append(ok,x);f.append(row);
+    f.onsubmit=async e=>{e.preventDefault();
+      try{await api('/api/links/'+l.id+'/edit',{label:label.value,welcome:welcome.value,about:about.value,autoreply:auto.value,quiet_start:+qs.value,quiet_end:+qe.value,tz:new Date().getTimezoneOffset()});close();loadLinks()}
+      catch(er){err.textContent=er.message;err.hidden=false}};
+    box.append(f);
+  });
+}
 async function loadLinks(){
   const ls=await api('/api/links'),box=$('links');box.textContent='';
   if(!ls.length)box.append(el('p','fine','Create your first link, then share it anywhere.'));
@@ -59,29 +105,52 @@ async function loadLinks(){
     c.append(el('div','ellip',l.label+(l.active?'':' (paused)')),el('div','fine ellip',u+' \u00b7 '+l.chats+' chats'));
     const r=el('div','row');
     const cp=el('button','btn sm','Copy link');cp.onclick=async()=>{await navigator.clipboard.writeText(u);cp.textContent='Copied \u2713';cp.classList.add('pop');setTimeout(()=>{cp.textContent='Copy link';cp.classList.remove('pop')},1500)};
+    const sh=el('button','linkbtn','Share');sh.onclick=()=>shareSheet(l);
+    const ed=el('button','linkbtn','Edit');ed.onclick=()=>editSheet(l);
     const tg=el('button','linkbtn',l.active?'Pause':'Resume');tg.onclick=async()=>{await api('/api/links/'+l.id+'/toggle',{});loadLinks()};
-    const dl=el('button','linkbtn danger','Delete');dl.onclick=async()=>{if(confirm('Delete this link and all its chats?')){await api('/api/links/'+l.id+'/delete',{});loadLinks();loadThreads()}};
-    r.append(cp,tg,dl);c.append(r);box.append(c)});
+    const dl=el('button','linkbtn danger','Delete');dl.onclick=()=>confirmSheet('Delete this link?','The link and all of its chats will be removed.','Delete link',async()=>{await api('/api/links/'+l.id+'/delete',{});loadLinks();loadThreads()});
+    r.append(cp,sh,ed,tg,dl);c.append(r);box.append(c)});
+}
+function emptyInbox(){
+  const d=el('div','empty');
+  d.innerHTML='<svg width="96" height="72" viewBox="0 0 96 72" fill="none" aria-hidden="true"><rect x="6" y="6" width="56" height="34" rx="12" fill="#E7E0FF"/><rect x="34" y="32" width="56" height="34" rx="12" fill="#6D4AFF"/><circle cx="48" cy="49" r="3" fill="#fff"/><circle cx="62" cy="49" r="3" fill="#fff"/><circle cx="76" cy="49" r="3" fill="#fff"/></svg>';
+  d.append(el('p',null,'No chats yet. Share a link to get started.'));
+  return d;
+}
+function notifyMaybe(ts){
+  const req=ts.filter(t=>t.status==='pending').length,un=ts.reduce((n,t)=>n+Number(t.unread),0);
+  if(last&&document.hidden&&'Notification' in window&&Notification.permission==='granted'&&(req>last.req||un>last.un)){new Notification(pub.name,{body:req>last.req?'You have a new chat request':'You have a new message'})}
+  last={req,un};
 }
 async function loadThreads(){
   let ts;try{ts=await api('/api/threads')}catch(e){if(e.status===401)location.reload();return}
+  notifyMaybe(ts);
   const box=$('threads');box.textContent='';
-  if(!ts.length)box.append(el('p','fine','No chats yet. Share a link to get started.'));
+  if(!ts.length)box.append(emptyInbox());
   ts.forEach(t=>{
     const b=el('button','item'+(t.id===cur?' on':'')),m=el('div','grow');
     m.append(el('div',null,t.alias+' \u00b7 '+t.label),el('div','fine ellip',t.status==='pending'?'Request: '+t.preview:t.preview));
     b.append(m);
-    if(t.status==='pending')b.append(el('span','pill','Request'));else if(t.unread>0)b.append(el('span','dot'));
+    if(t.status==='pending')b.append(el('span','pill','Request'));else if(t.unread>0){const d=el('span','dot');d.setAttribute('role','img');d.setAttribute('aria-label','Unread messages');b.append(d)}
     b.onclick=()=>select(t.id);box.append(b)});
 }
-function closePanel(){cur=null;document.body.classList.remove('chat-open');const p=$('panel');p.textContent='';p.append(el('p','fine','Select a chat to start.'));p.firstChild.style.padding='16px';loadThreads()}
+async function loadBlocks(){
+  const b=await api('/api/blocks'),box=$('blocks');box.textContent='';
+  if(b.count>0){box.append(document.createTextNode('Blocked visitors: '+b.count+' '));
+    const c=el('button','linkbtn','Clear all');
+    c.onclick=()=>confirmSheet('Clear blocked visitors?','They will be able to start chats with you again.','Clear all',async()=>{await api('/api/blocks/clear',{});loadBlocks()});
+    box.append(c)}
+}
+function closePanel(){cur=null;document.body.classList.remove('chat-open');const p=$('panel');p.textContent='';const m=el('p','fine','Select a chat to start.');m.style.padding='16px';p.append(m);loadThreads();loadBlocks()}
 function select(id){cur=id;document.body.classList.add('chat-open');mountChat($('panel'),'/api/t/'+id,'o',closePanel,closePanel);loadThreads()}
 async function boot(){
   pub=await api('/api/public');
   document.title=pub.name+': inbox';$('brand').textContent=pub.name;
   if(pub.announcement){$('banner').textContent=pub.announcement;$('banner').hidden=false}
   $('switch').hidden=!pub.registration_open;
-  try{const m=await api('/api/me');$('who').textContent=m.username;$('app').hidden=false;loadLinks();loadThreads();setInterval(loadThreads,4000)}
+  try{const m=await api('/api/me');$('who').textContent=m.username;$('app').hidden=false;
+    if('Notification' in window&&Notification.permission==='default')$('notif').hidden=false;
+    loadLinks();loadThreads();loadBlocks();setInterval(loadThreads,4000)}
   catch(e){$('auth').hidden=false}
 }
 boot();
