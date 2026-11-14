@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
@@ -14,6 +15,10 @@ import (
 	"sync"
 	"time"
 )
+
+// proxyHops is how many reverse proxies sit in front of the app (TRUSTED_PROXY_HOPS).
+// The client IP is taken from that many entries from the right of X-Forwarded-For.
+var proxyHops = 1
 
 func sha256hex(s string) string {
 	h := sha256.Sum256([]byte(s))
@@ -36,16 +41,29 @@ func randSlug(n int) string {
 	return string(b)
 }
 
+const pbkdf2Iter = 310000
+
 func hashPass(p string) string {
 	salt := make([]byte, 16)
 	rand.Read(salt)
-	k, _ := pbkdf2.Key(sha256.New, p, salt, 200000, 32)
-	return hex.EncodeToString(salt) + "$" + hex.EncodeToString(k)
+	k, _ := pbkdf2.Key(sha256.New, p, salt, pbkdf2Iter, 32)
+	return "v2$" + strconv.Itoa(pbkdf2Iter) + "$" + hex.EncodeToString(salt) + "$" + hex.EncodeToString(k)
 }
+
+// dummyHash is checked when a username doesn't exist, so response time doesn't reveal which usernames are real.
+var dummyHash = hashPass("not-a-real-password")
 
 func checkPass(p, stored string) bool {
 	parts := strings.Split(stored, "$")
-	if len(parts) != 2 {
+	iter := 200000 // hashes created before v2 had no iteration count
+	if len(parts) == 4 && parts[0] == "v2" {
+		n, err := strconv.Atoi(parts[1])
+		if err != nil {
+			return false
+		}
+		iter, parts = n, parts[2:]
+	}
+	if len(parts) != 2 || iter < 1000 || iter > 5000000 {
 		return false
 	}
 	salt, e1 := hex.DecodeString(parts[0])
@@ -53,22 +71,12 @@ func checkPass(p, stored string) bool {
 	if e1 != nil || e2 != nil {
 		return false
 	}
-	k, err := pbkdf2.Key(sha256.New, p, salt, 200000, 32)
+	k, err := pbkdf2.Key(sha256.New, p, salt, iter, 32)
 	return err == nil && subtle.ConstantTimeCompare(k, want) == 1
 }
 
-func (a *App) sign(v string) string {
-	m := hmac.New(sha256.New, []byte(a.cfg.Secret))
-	m.Write([]byte(v))
-	return v + "." + hex.EncodeToString(m.Sum(nil))
-}
-
-func (a *App) unsign(s string) (string, bool) {
-	i := strings.LastIndex(s, ".")
-	if i < 0 || !hmac.Equal([]byte(a.sign(s[:i])), []byte(s)) {
-		return "", false
-	}
-	return s[:i], true
+func same(a, b string) bool {
+	return subtle.ConstantTimeCompare([]byte(sha256hex(a)), []byte(sha256hex(b))) == 1
 }
 
 func (a *App) setCookie(w http.ResponseWriter, name, val string, maxAge int, strict bool) {
@@ -79,50 +87,67 @@ func (a *App) setCookie(w http.ResponseWriter, name, val string, maxAge int, str
 	http.SetCookie(w, &http.Cookie{Name: name, Value: val, Path: "/", MaxAge: maxAge, HttpOnly: true, Secure: a.cfg.Secure, SameSite: ss})
 }
 
-func (a *App) startOwner(w http.ResponseWriter, id int64) {
-	exp := time.Now().Add(30 * 24 * time.Hour).Unix()
-	a.setCookie(w, "os", a.sign("o:"+strconv.FormatInt(id, 10)+":"+strconv.FormatInt(exp, 10)), 30*86400, false)
+// ---------- server-side sessions: revocable, and only a hash is stored ----------
+
+func (a *App) newSession(ctx context.Context, kind string, owner int64, ttl time.Duration) (string, error) {
+	tok := randHex(24)
+	var oid any
+	if owner > 0 {
+		oid = owner
+	}
+	_, err := a.db.Exec(ctx, `INSERT INTO sessions(id,kind,owner_id,expires_at) VALUES($1,$2,$3,now()+make_interval(secs => $4::float8))`, sha256hex(tok), kind, oid, ttl.Seconds())
+	return tok, err
+}
+
+func (a *App) startOwner(w http.ResponseWriter, r *http.Request, id int64) error {
+	tok, err := a.newSession(r.Context(), "owner", id, 30*24*time.Hour)
+	if err != nil {
+		return err
+	}
+	a.setCookie(w, "os", tok, 30*86400, false)
+	return nil
+}
+
+func (a *App) endSession(r *http.Request, cookie string) {
+	if c, err := r.Cookie(cookie); err == nil && len(c.Value) == 48 {
+		a.exec(r.Context(), "end session", `DELETE FROM sessions WHERE id=$1`, sha256hex(c.Value))
+	}
 }
 
 // ownerID returns the signed-in owner's id, or 0.
 func (a *App) ownerID(r *http.Request) int64 {
 	c, err := r.Cookie("os")
-	if err != nil {
+	if err != nil || len(c.Value) != 48 {
 		return 0
 	}
-	v, ok := a.unsign(c.Value)
-	if !ok {
-		return 0
-	}
-	p := strings.Split(v, ":")
-	if len(p) != 3 || p[0] != "o" {
-		return 0
-	}
-	id, _ := strconv.ParseInt(p[1], 10, 64)
-	exp, _ := strconv.ParseInt(p[2], 10, 64)
-	var n int
-	if time.Now().Unix() > exp || a.db.QueryRow(r.Context(), `SELECT 1 FROM owners WHERE id=$1 AND NOT disabled`, id).Scan(&n) != nil {
+	var id int64
+	if a.db.QueryRow(r.Context(), `SELECT s.owner_id FROM sessions s JOIN owners o ON o.id=s.owner_id WHERE s.id=$1 AND s.kind='owner' AND s.expires_at>now() AND NOT o.disabled`, sha256hex(c.Value)).Scan(&id) != nil {
 		return 0
 	}
 	return id
 }
 
-func (a *App) adminOK(r *http.Request) bool {
+// adminToken returns the raw admin session token if the request has a valid admin session, else "".
+func (a *App) adminToken(r *http.Request) string {
 	c, err := r.Cookie("as")
-	if err != nil {
-		return false
+	if err != nil || len(c.Value) != 48 {
+		return ""
 	}
-	v, ok := a.unsign(c.Value)
-	if !ok || !strings.HasPrefix(v, "a:") {
-		return false
+	var n int
+	if a.db.QueryRow(r.Context(), `SELECT 1 FROM sessions WHERE id=$1 AND kind='admin' AND expires_at>now()`, sha256hex(c.Value)).Scan(&n) != nil {
+		return ""
 	}
-	exp, _ := strconv.ParseInt(v[2:], 10, 64)
-	return time.Now().Unix() < exp
+	return c.Value
 }
 
-func same(a, b string) bool {
-	return subtle.ConstantTimeCompare([]byte(sha256hex(a)), []byte(sha256hex(b))) == 1
+// csrf derives the anti-forgery token for an admin session.
+func (a *App) csrf(token string) string {
+	m := hmac.New(sha256.New, []byte(a.cfg.Secret))
+	m.Write([]byte("csrf|" + token))
+	return hex.EncodeToString(m.Sum(nil))
 }
+
+// ---------- rate limiting ----------
 
 // Limiter is a small in-memory fixed-window rate limiter.
 type Limiter struct {
@@ -157,9 +182,87 @@ func (l *Limiter) allow(key string, max int, per time.Duration) bool {
 	return w.n <= max
 }
 
+// FailLimiter counts failed logins per key over a 15 minute window and reports how long a locked key must wait.
+type FailLimiter struct {
+	mu sync.Mutex
+	m  map[string]*failRec
+}
+
+type failRec struct {
+	n     int
+	start time.Time
+}
+
+const failWindow = 15 * time.Minute
+
+func newFails() *FailLimiter { return &FailLimiter{m: map[string]*failRec{}} }
+
+// wait returns how long until key may try again, or 0 if it isn't locked.
+func (f *FailLimiter) wait(key string, limit int) time.Duration {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	r := f.m[key]
+	if r == nil {
+		return 0
+	}
+	left := failWindow - time.Since(r.start)
+	if left <= 0 {
+		delete(f.m, key)
+		return 0
+	}
+	if r.n >= limit {
+		return left
+	}
+	return 0
+}
+
+func (f *FailLimiter) fail(keys ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	now := time.Now()
+	if len(f.m) > 50000 {
+		for k, r := range f.m {
+			if now.Sub(r.start) > failWindow {
+				delete(f.m, k)
+			}
+		}
+	}
+	for _, k := range keys {
+		if r := f.m[k]; r == nil || now.Sub(r.start) > failWindow {
+			f.m[k] = &failRec{1, now}
+		} else {
+			r.n++
+		}
+	}
+}
+
+func (f *FailLimiter) reset(keys ...string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, k := range keys {
+		delete(f.m, k)
+	}
+}
+
+// loginWait checks the three login limits: 5 failures per account+IP pair, and 20 per account or per IP overall.
+func (a *App) loginWait(user, ip string) (pair, acct, byIP string, wait time.Duration) {
+	pair, acct, byIP = "p:"+user+"|"+ip, "a:"+user, "i:"+ip
+	wait = max(a.fails.wait(pair, 5), a.fails.wait(acct, 20), a.fails.wait(byIP, 20))
+	return
+}
+
 func clientIP(r *http.Request) string {
-	if f := r.Header.Get("X-Forwarded-For"); f != "" {
-		return strings.TrimSpace(strings.Split(f, ",")[0])
+	if proxyHops > 0 {
+		if f := r.Header.Get("X-Forwarded-For"); f != "" {
+			parts := strings.Split(f, ",")
+			i := len(parts) - proxyHops
+			if i < 0 {
+				i = 0
+			}
+			if ip := net.ParseIP(strings.TrimSpace(parts[i])); ip != nil {
+				return ip.String()
+			}
+		}
 	}
 	h, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {

@@ -5,9 +5,12 @@ import (
 	"embed"
 	"log"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"regexp"
+	"runtime/debug"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -24,15 +27,18 @@ type Config struct {
 }
 
 type App struct {
-	cfg Config
-	db  *pgxpool.Pool
-	hub *Hub
-	set *Settings
-	rl  *Limiter
+	cfg   Config
+	db    *pgxpool.Pool
+	hub   *Hub
+	set   *Settings
+	rl    *Limiter
+	fails *FailLimiter
 }
 
 // Paths the app already uses, which an admin slug must not collide with.
 var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true}
+
+const csp = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
 func loadConfig() Config {
 	c := Config{
@@ -61,6 +67,11 @@ func loadConfig() Config {
 	if c.Secret == "" {
 		c.Secret = sha256hex(c.AdminPass + "|" + c.DatabaseURL)
 	}
+	if v := os.Getenv("TRUSTED_PROXY_HOPS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 0 && n <= 5 {
+			proxyHops = n
+		}
+	}
 	c.Secure = strings.HasPrefix(c.BaseURL, "https://")
 	return c
 }
@@ -79,13 +90,13 @@ func main() {
 		log.Fatalf("cannot reach database: %v", err)
 	}
 	cancel()
-	a := &App{cfg: cfg, db: db, hub: newHub(), set: &Settings{m: map[string]string{}}, rl: newLimiter()}
+	a := &App{cfg: cfg, db: db, hub: newHub(), set: &Settings{m: map[string]string{}}, rl: newLimiter(), fails: newFails()}
 	if err := a.migrate(ctx); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}
 	a.loadSettings(ctx)
 	go a.janitor(ctx)
-	srv := &http.Server{Addr: ":" + cfg.Port, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second}
+	srv := &http.Server{Addr: ":" + cfg.Port, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 1 << 16}
 	go func() {
 		<-ctx.Done()
 		sc, c := context.WithTimeout(context.Background(), 5*time.Second)
@@ -112,17 +123,50 @@ func (a *App) routes() http.Handler {
 	return a.guard(mux)
 }
 
+// guard adds security headers, recovers from panics without leaking details,
+// blocks cross-site writes, serves the maintenance page, and swaps plain 404s for the designed one.
 func (a *App) guard(next http.Handler) http.Handler {
 	ap := "/" + a.cfg.AdminPath
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		w.Header().Set("Referrer-Policy", "same-origin")
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "same-origin")
+		h.Set("Permissions-Policy", "camera=(), microphone=(), geolocation=(), payment=()")
+		h.Set("Cross-Origin-Opener-Policy", "same-origin")
+		h.Set("Content-Security-Policy", csp)
+		if a.cfg.Secure {
+			h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		}
+		defer func() {
+			if rec := recover(); rec != nil {
+				ref := randHex(3)
+				log.Printf("PANIC ref=%s %s %s: %v\n%s", ref, r.Method, r.URL.Path, rec, debug.Stack())
+				a.errorPage(w, r, http.StatusInternalServerError, "Something went wrong on our side.", ref)
+			}
+		}()
 		p := r.URL.Path
-		if a.set.get("maintenance") == "1" && p != "/health" && !strings.HasPrefix(p, ap) && !strings.HasPrefix(p, "/static/") {
-			http.Error(w, "Down for maintenance. Back soon.", http.StatusServiceUnavailable)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
+			if o := r.Header.Get("Origin"); o != "" {
+				if u, err := url.Parse(o); err != nil || u.Host != r.Host {
+					a.errorPage(w, r, http.StatusForbidden, "That request was blocked.", "")
+					return
+				}
+			}
+			if strings.HasPrefix(p, "/api/") && !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+				fail(w, http.StatusUnsupportedMediaType, "Unsupported request")
+				return
+			}
+		}
+		if a.set.get("maintenance") == "1" && p != "/health" && p != "/favicon.svg" && !strings.HasPrefix(p, ap) && !strings.HasPrefix(p, "/static/") && !strings.HasPrefix(p, "/icons/") {
+			a.maintenance(w, r)
 			return
 		}
-		next.ServeHTTP(w, r)
+		nw := &nfw{ResponseWriter: w, r: r}
+		next.ServeHTTP(nw, r)
+		if nw.swallowed {
+			a.notFound(w, r)
+		}
 	})
 }
 
@@ -145,9 +189,10 @@ func (a *App) health(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.Header().Set("Cache-Control", "no-store")
 	if err := a.db.Ping(ctx); err != nil {
+		log.Printf("health: database ping failed: %v", err)
 		w.WriteHeader(http.StatusServiceUnavailable)
-		w.Write([]byte(`{"status":"degraded","db":"down"}`))
+		w.Write([]byte(`{"status":"degraded"}`))
 		return
 	}
-	w.Write([]byte(`{"status":"ok","db":"up"}`))
+	w.Write([]byte(`{"status":"ok"}`))
 }

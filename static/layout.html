@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<script>document.documentElement.classList.add('js')</script>
+<script src="/static/site.js"></script>
 <title>{{.Title}}</title>
 <meta name="description" content="{{.Desc}}">
 <link rel="canonical" href="{{.Canon}}">
@@ -43,9 +43,6 @@
 <a href="/about">About</a><a href="/blog">Blog</a><a href="/feed.xml">RSS</a><a href="/llms.txt">llms.txt</a><a href="https://github.com/Advay254/allovchat">Source</a>
 <span>&copy; {{.Year}} {{.Site}}</span>
 </div></footer>
-<script>
-if('IntersectionObserver' in window){const io=new IntersectionObserver(es=>es.forEach(e=>{if(e.isIntersecting){e.target.classList.add('in');io.unobserve(e.target)}}),{threshold:.12});document.querySelectorAll('.rv').forEach(el=>io.observe(el))}else document.querySelectorAll('.rv').forEach(el=>el.classList.add('in'));
-</script>
 </body>
 </html>
 {{define "logo"}}<svg width="30" height="30" viewBox="0 0 64 64" aria-hidden="true"><rect x="10" y="10" width="30" height="27" rx="9" fill="#C8401B"/><rect x="22" y="22" width="32" height="30" rx="10" fill="currentColor"/><circle cx="31" cy="37" r="2.6" fill="var(--bg)"/><circle cx="38" cy="37" r="2.6" fill="var(--bg)"/><circle cx="45" cy="37" r="2.6" fill="var(--bg)"/></svg>{{end}}
