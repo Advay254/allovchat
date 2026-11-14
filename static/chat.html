@@ -2,54 +2,60 @@
 <html lang="en">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
-<title>Anonymous chat</title>
+<title>Private chat</title>
+<meta name="theme-color" content="#F6F1E7" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171412" media="(prefers-color-scheme: dark)">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="apple-touch-icon" href="/icons/180.png">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/ui.css">
 </head>
 <body>
-<div class="wrap narrow">
-<div id="start" class="card" hidden>
-<h1 id="lbl"></h1>
+<div id="start" class="intro" hidden>
+<div class="intro-in stag">
+<img src="/favicon.svg" width="48" height="48" alt="">
+<h1 id="lbl" class="ui-h"></h1>
 <p id="about" class="fine" hidden></p>
-<p id="welcome"></p>
-<form id="sf" class="row" style="flex-direction:column;align-items:stretch">
-<label for="sm">Your message</label>
-<textarea id="sm" rows="4" placeholder="Write your message" required></textarea>
+<p id="welcome" style="margin:0;font-size:18px"></p>
+<form id="sf" style="display:flex;flex-direction:column;gap:12px">
+<label class="sr" for="sm">Your message</label>
+<textarea id="sm" rows="5" placeholder="Write your message" required></textarea>
 <div id="ts"></div>
 <p id="serr" class="err" role="alert" hidden></p>
-<button class="btn">Send anonymously</button>
+<button class="btn wide" id="sbtn">Send anonymously</button>
 </form>
 <p class="fine">Chats aren't end-to-end encrypted, and old ones are deleted automatically.</p>
+<p class="fine"><a href="/">Make your own private link</a></p>
 </div>
-<div id="chat" class="card chat" hidden></div>
-<div id="gone" class="card" hidden><h2>This link isn't active</h2><p class="fine">It may have been paused or removed by its owner.</p></div>
-<p class="fine" style="text-align:center"><a href="/">Make your own anonymous link</a></p>
 </div>
+<main id="chatview" class="chatview solo" aria-label="Conversation" hidden></main>
+<div id="gone" class="intro" hidden><div class="intro-in"><h1 class="ui-h">This link isn't active</h1><p class="fine">It may have been paused or removed by its owner.</p><p class="fine"><a href="/">Make your own private link</a></p></div></div>
 <script src="/static/ui.js"></script>
 <script src="/static/chat.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const slug=location.pathname.split('/')[2];
 let token='',tsKey='';
-function openChat(){$('start').hidden=true;$('chat').hidden=false;mountChat($('chat'),'/api/l/'+slug,'v',()=>location.reload())}
+function openChat(){vt(()=>{$('start').hidden=true;$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',()=>location.reload())})}
 function loadTS(key){
   const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';s.async=true;
   s.onload=()=>turnstile.render('#ts',{sitekey:key,callback:t=>{token=t}});document.head.append(s);
 }
 $('sf').onsubmit=async e=>{e.preventDefault();$('serr').hidden=true;
-  if(tsKey&&!token){$('serr').textContent='Complete the human check first';$('serr').hidden=false;return}
-  try{await api('/api/l/'+slug+'/start',{message:$('sm').value,turnstile:token});openChat()}
-  catch(er){$('serr').textContent=er.message;$('serr').hidden=false;if(tsKey&&window.turnstile){turnstile.reset();token=''}}};
+  if(tsKey&&!token){$('serr').textContent='Complete the human check first';$('serr').hidden=false;shake($('sf'));return}
+  const b=$('sbtn');b.setAttribute('aria-busy','true');
+  try{await api('/api/l/'+slug+'/start',{message:$('sm').value,turnstile:token});haptic('success');openChat()}
+  catch(er){b.removeAttribute('aria-busy');$('serr').textContent=er.message;$('serr').hidden=false;shake($('sf'));if(tsKey&&window.turnstile){turnstile.reset();token=''}}};
 async function boot(){
-  let p={};try{p=await api('/api/public');document.title=p.name+': anonymous chat'}catch(e){}
+  let p={};try{p=await api('/api/public');document.title=p.name+': private chat'}catch(e){}
   let info;try{info=await api('/api/l/'+slug+'/info')}catch(e){$('gone').hidden=false;return}
   $('lbl').textContent=info.label;
   if(info.about){$('about').textContent=info.about;$('about').hidden=false}
-  $('welcome').textContent=info.welcome||'Send an anonymous message. They will not see who you are, and you do not need an account.';
-  try{await api('/api/l/'+slug+'/state');openChat()}
-  catch(e){$('start').hidden=false;if(p.turnstile_site){tsKey=p.turnstile_site;loadTS(tsKey)}}
+  $('welcome').textContent=info.welcome||'Send a message. They will not see who you are, and you do not need an account.';
+  try{await api('/api/l/'+slug+'/state');$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',()=>location.reload())}
+  catch(e){$('start').hidden=false;stagger(document.querySelector('.intro-in'));if(p.turnstile_site){tsKey=p.turnstile_site;loadTS(tsKey)}}
 }
 boot();
 </script>

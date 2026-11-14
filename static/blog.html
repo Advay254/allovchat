@@ -1,0 +1,8 @@
+{{define "content"}}
+<section class="site section">
+<div class="prose"><h1 class="rise">Blog</h1><p class="lede rise" style="--i:1">Practical notes on private conversations, sharing contact details, and keeping a public chat link tidy.</p></div>
+<div class="post-list">
+{{range .Posts}}<a class="rv" href="/blog/{{.Slug}}"><h3>{{.Title}}</h3><p>{{.Desc}}</p><p class="fine" style="margin-top:8px"><time datetime="{{.Date}}">{{.Pretty}}</time></p></a>{{end}}
+</div>
+</section>
+{{end}}
