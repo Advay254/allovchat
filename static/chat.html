@@ -6,36 +6,50 @@
 <meta name="robots" content="noindex">
 <title>Anonymous chat</title>
 <link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/ui.css">
 </head>
 <body>
 <div class="wrap narrow">
 <div id="start" class="card" hidden>
 <h1 id="lbl"></h1>
-<p>Send an anonymous message. The owner won't see who you are, and you don't need an account.</p>
+<p id="about" class="fine" hidden></p>
+<p id="welcome"></p>
 <form id="sf" class="row" style="flex-direction:column;align-items:stretch">
+<label for="sm">Your message</label>
 <textarea id="sm" rows="4" placeholder="Write your message" required></textarea>
-<p id="serr" class="err" hidden></p>
+<div id="ts"></div>
+<p id="serr" class="err" role="alert" hidden></p>
 <button class="btn">Send anonymously</button>
 </form>
-<p class="fine">Anonymous to the owner, not to the site operator. Chats aren't end-to-end encrypted and are deleted automatically.</p>
+<p class="fine">Chats aren't end-to-end encrypted, and old ones are deleted automatically.</p>
 </div>
 <div id="chat" class="card chat" hidden></div>
 <div id="gone" class="card" hidden><h2>This link isn't active</h2><p class="fine">It may have been paused or removed by its owner.</p></div>
 <p class="fine" style="text-align:center"><a href="/">Make your own anonymous link</a></p>
 </div>
+<script src="/static/ui.js"></script>
 <script src="/static/chat.js"></script>
 <script>
 const $=id=>document.getElementById(id);
 const slug=location.pathname.split('/')[2];
+let token='',tsKey='';
 function openChat(){$('start').hidden=true;$('chat').hidden=false;mountChat($('chat'),'/api/l/'+slug,'v',()=>location.reload())}
+function loadTS(key){
+  const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';s.async=true;
+  s.onload=()=>turnstile.render('#ts',{sitekey:key,callback:t=>{token=t}});document.head.append(s);
+}
 $('sf').onsubmit=async e=>{e.preventDefault();$('serr').hidden=true;
-  try{await api('/api/l/'+slug+'/start',{message:$('sm').value});openChat()}
-  catch(er){$('serr').textContent=er.message;$('serr').hidden=false}};
+  if(tsKey&&!token){$('serr').textContent='Complete the human check first';$('serr').hidden=false;return}
+  try{await api('/api/l/'+slug+'/start',{message:$('sm').value,turnstile:token});openChat()}
+  catch(er){$('serr').textContent=er.message;$('serr').hidden=false;if(tsKey&&window.turnstile){turnstile.reset();token=''}}};
 async function boot(){
-  try{const p=await api('/api/public');document.title=p.name+': anonymous chat'}catch(e){}
+  let p={};try{p=await api('/api/public');document.title=p.name+': anonymous chat'}catch(e){}
   let info;try{info=await api('/api/l/'+slug+'/info')}catch(e){$('gone').hidden=false;return}
   $('lbl').textContent=info.label;
-  try{await api('/api/l/'+slug+'/state');openChat()}catch(e){$('start').hidden=false}
+  if(info.about){$('about').textContent=info.about;$('about').hidden=false}
+  $('welcome').textContent=info.welcome||'Send an anonymous message. They will not see who you are, and you do not need an account.';
+  try{await api('/api/l/'+slug+'/state');openChat()}
+  catch(e){$('start').hidden=false;if(p.turnstile_site){tsKey=p.turnstile_site;loadTS(tsKey)}}
 }
 boot();
 </script>
