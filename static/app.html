@@ -4,32 +4,37 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
 <meta name="robots" content="noindex">
-<title>Inbox</title>
-<meta name="theme-color" content="#F6F1E7" media="(prefers-color-scheme: light)">
-<meta name="theme-color" content="#171412" media="(prefers-color-scheme: dark)">
+<title>Dashboard</title>
+<meta name="theme-color" content="#F5F8FD" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#0B1220" media="(prefers-color-scheme: dark)">
 <link rel="icon" href="/favicon.svg" type="image/svg+xml">
 <link rel="apple-touch-icon" href="/icons/180.png">
 <link rel="manifest" href="/manifest.webmanifest">
 <link rel="stylesheet" href="/static/style.css">
 <link rel="stylesheet" href="/static/ui.css">
+<link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
 <div id="auth" class="auth" hidden>
 <form id="af" class="auth-card stag">
-<img src="/favicon.svg" width="48" height="48" alt="">
+<div class="logo"><img src="/static/logo-mark.svg" width="54" height="32" alt=""><span class="wm">allov<b>chat</b></span></div>
 <h1 id="atitle" class="ui-h">Welcome back</h1>
+<p id="asub" class="fine" style="margin:0">Log in to your account.</p>
 <label class="field">Username<input id="au" autocomplete="username" autocapitalize="none" required></label>
 <label class="field">Password<input id="ap" type="password" autocomplete="current-password" required></label>
+<div id="ats"></div>
 <p id="aerr" class="err" role="alert" hidden></p>
-<button class="btn wide" id="abtn">Sign in</button>
+<button class="btn wide" id="abtn">Log in</button>
 <p class="fine center"><button type="button" id="switch" class="linkbtn">Create an account</button></p>
+<p class="fine center" style="margin:0">No account is needed to chat. Open a link someone shared with you.</p>
 </form>
 </div>
 <div id="shell" class="shell" hidden>
 <div class="tabs-wrap">
 <div id="banner" class="banner" role="status" hidden></div>
-<header class="bar"><h1 id="tabtitle" class="ui-h">Chats</h1></header>
-<section id="tab-chats" class="tabpane" role="tabpanel" aria-labelledby="t-chats"><div id="threads" class="group"></div></section>
+<header class="bar"><h1 id="tabtitle" class="ui-h">Dashboard</h1></header>
+<section id="tab-home" class="tabpane" role="tabpanel" aria-labelledby="t-home"><div id="home"></div></section>
+<section id="tab-chats" class="tabpane" role="tabpanel" aria-labelledby="t-chats" hidden><div id="threads" class="group"></div></section>
 <section id="tab-links" class="tabpane" role="tabpanel" aria-labelledby="t-links" hidden>
 <form id="lf" class="newlink"><label class="sr" for="ll">New link name</label><input id="ll" placeholder="Name a link, e.g. Used bike post" maxlength="60" required><button class="btn">Create</button></form>
 <p id="lerr" class="err" role="alert" hidden></p>
@@ -41,6 +46,7 @@
 <main id="chatview" class="chatview" aria-label="Conversation"></main>
 </div>
 <script src="/static/ui.js"></script>
+<script src="/static/brand.js"></script>
 <script src="/static/chat.js"></script>
 <script src="/static/app.js"></script>
 </body>

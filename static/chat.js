@@ -3,6 +3,8 @@
   const hm = (ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
   const CONTACT = /(\+?\d[\d\s().-]{7,}\d)|(^|\s)@[A-Za-z0-9_.]{3,}|[\w.+-]+@[\w-]+\.[\w.]+|(wa\.me|t\.me)\/\S+/i;
   const REASONS = [['spam', 'Spam or ads'], ['harassment', 'Harassment or abuse'], ['scam', 'Scam or asking for money'], ['explicit', 'Sexual or explicit content'], ['other', 'Something else']];
+  const QUICK = 'https://www.wikipedia.org/'; // where the emergency exit sends a guest, so nothing about the chat stays on screen
+  const left = (ms) => { const m = Math.floor(ms / 6e4), h = Math.floor(m / 60), d = Math.floor(h / 24); return d >= 2 ? d + ' days' : h >= 2 ? h + ' hours' : h >= 1 ? '1 hour' : Math.max(m, 1) + ' minutes'; };
 
   window.api = async (path, body) => {
     const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -12,31 +14,40 @@
     return j;
   };
 
-  // side: 'o' (owner) or 'v' (visitor). base: '/api/t/ID' or '/api/l/SLUG'
+  // side: 'o' (link owner) or 'v' (guest). base: '/api/t/ID', '/api/m/ID' (saved to an account) or '/api/l/SLUG'
   window.mountChat = function (root, base, side, onGone, onBack) {
     if (window._es) window._es.close();
+    clearInterval(window._exp);
     root.textContent = '';
-    let st = null, tTimer = 0, lastTyped = 0, rev = null;
-    const pend = [];
+    let st = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false;
+    const pend = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0;
 
     const head = $('div', 'chat-head');
     if (onBack) { const b = $('button', 'icon-btn back'); b.innerHTML = ico('back', 24); b.setAttribute('aria-label', 'Back'); b.onclick = onBack; head.append(b); }
     let av = avatar('?');
     const who = $('div', 'grow'), title = $('div', 'chat-title'), sub = $('div', 'chat-sub'); who.append(title, sub);
-    const revealBtn = $('button', 'btn soft sm'); revealBtn.innerHTML = ico('lock', 18) + '<span>Reveal</span>'; revealBtn.hidden = true;
+    const revealBtn = $('button', 'btn soft sm reveal-btn'); revealBtn.innerHTML = ico('lock', 18) + '<span>Reveal</span>'; revealBtn.hidden = true;
+    const leaveBtn = $('button', 'btn leave'); leaveBtn.innerHTML = ico('exit', 18) + '<span>Leave</span>'; leaveBtn.setAttribute('aria-label', 'Leave this chat now');
     const moreBtn = $('button', 'icon-btn'); moreBtn.innerHTML = ico('more'); moreBtn.setAttribute('aria-label', 'More options'); moreBtn.setAttribute('aria-haspopup', 'menu');
-    head.append(av, who, revealBtn, moreBtn);
+    head.append(av, who, revealBtn, leaveBtn, moreBtn);
 
+    const expiry = $('div', 'expiry'), exIcon = $('span'), exTxt = $('span'); exIcon.innerHTML = ico('clock', 18); expiry.append(exIcon, exTxt); expiry.hidden = true; expiry.setAttribute('role', 'status');
     const msgs = $('div', 'msgs'), foot = $('div', 'chat-foot');
     msgs.setAttribute('role', 'log'); msgs.setAttribute('aria-live', 'polite'); msgs.setAttribute('aria-label', 'Messages');
     const typing = $('div', 'mrow them'), tb = $('div', 'm them typing'); tb.append($('i'), $('i'), $('i')); typing.append(tb); typing.hidden = true;
     const hint = $('div', 'hint'), hintBtn = $('button', 'linkbtn', 'Reveal now'); hint.hidden = true; hint.setAttribute('role', 'status');
     hint.append($('span', null, 'Looks like contact info. Want to reveal this properly?'), hintBtn);
-    root.append(head, msgs, foot);
+    root.append(head, expiry, msgs, foot);
     for (let i = 0; i < 3; i++) { const r = $('div', 'mrow ' + (i === 1 ? 'me' : 'them')), s = $('div', 'sk'); s.style.cssText = 'height:42px;border-radius:20px;width:' + (45 + i * 12) + '%'; r.append(s); msgs.append(r); }
 
     const bottom = (smooth) => msgs.scrollTo({ top: msgs.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
-    const resetSub = () => { sub.textContent = !st ? '' : side === 'o' ? 'Anonymous visitor \u00b7 ' + st.label : 'Anonymous chat'; };
+    const refresh = () => {
+      if (!st) return;
+      const ms = new Date(st.expires_at) - Date.now();
+      if (ms <= 0) { onGone && onGone(); return; }
+      sub.textContent = typingOn ? 'typing\u2026' : [online ? 'Online' : '', side === 'o' ? 'Anonymous guest' : 'Anonymous chat', 'ends in ' + left(ms)].filter(Boolean).join(' \u00b7 ');
+      if (ms <= 12 * 3600e3) { expiry.hidden = false; exTxt.textContent = 'This conversation will be deleted in ' + left(ms) + '. Wrap up, and share contact details now if you both want to.'; } else expiry.hidden = true;
+    };
     const lastRow = () => { const n = typing.previousElementSibling; return n && n.classList.contains('mrow') ? n : null; };
     const bubble = (m, animate) => {
       const mine = m.side === side, row = $('div', 'mrow ' + (mine ? 'me' : 'them')), b = $('div', 'm ' + (mine ? 'me' : 'them') + ' end');
@@ -60,7 +71,7 @@
         b.disabled = !i.value.trim();
         const c = CONTACT.test(i.value);
         if (hint.hidden === c) { hint.hidden = !c; if (c) haptic('select'); }
-        if (Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
+        if (!(st && st.privacy) && Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
       };
       f.onsubmit = async (e) => {
         e.preventDefault();
@@ -77,7 +88,7 @@
     };
 
     const render = () => {
-      title.textContent = st.peer; resetSub();
+      title.textContent = st.peer; online = !!st.online;
       const na = avatar(st.peer); head.replaceChild(na, av); av = na;
       msgs.textContent = ''; msgs.append(typing); typing.hidden = true; pend.length = 0;
       st.messages.forEach((m) => msgs.insertBefore(bubble(m, false), typing)); bottom(false);
@@ -91,10 +102,11 @@
         bar.append($('span', 'fine', 'New request'), r); foot.append(bar);
       } else {
         const w = $('div');
-        w.append($('p', 'fine center', st.status === 'pending' ? 'Waiting for the owner to accept your message\u2026' : 'This chat is closed.'));
+        w.append($('p', 'fine center', st.status === 'pending' ? 'Waiting for them to accept your message\u2026' : 'This chat is closed.'));
         if (st.status === 'pending' && st.auto) w.append($('p', 'fine center', 'Auto-reply: ' + st.auto));
         foot.append(w);
       }
+      refresh();
     };
 
     const fillReveal = () => {
@@ -123,6 +135,30 @@
     };
     revealBtn.onclick = openReveal; hintBtn.onclick = openReveal;
 
+    // Emergency exit: no questions, no confirmation. The chat is deleted for both people.
+    const leaveNow = async () => {
+      haptic('warn');
+      try { await api(base + '/leave', {}); } catch (e) {}
+      if (viaLink) { location.replace(QUICK); return; }
+      onGone && onGone();
+    };
+    leaveBtn.onclick = leaveNow;
+
+    const privacySheet = () => sheet('Privacy mode', (box, close) => {
+      const row = $('div', 'row'), t = $('div', 'grow'); t.append($('b', null, 'Hide my activity'), $('div', 'fine', 'No typing indicator, read receipts or online status from you in this chat.'));
+      const sw = switchEl(!!st.privacy, async (v) => { try { await api(base + '/privacy', { on: v }); st.privacy = v; return true; } catch (e) { toast(e.message); return false; } }, 'Privacy mode');
+      row.append(t, sw);
+      const done = $('button', 'btn soft wide', 'Done'); done.onclick = close;
+      box.append(row, done);
+    });
+    const retentionSheet = () => sheet('Delete this chat sooner', (box, close) => {
+      const ms = new Date(st.expires_at) - Date.now(), opts = [[1, 'In 1 hour'], [6, 'In 6 hours'], [24, 'In 24 hours'], [72, 'In 3 days']].filter(([h]) => h * 3600e3 < ms);
+      if (!opts.length) { box.append($('p', null, 'This chat already ends in less than an hour.')); return; }
+      box.append($('p', 'fine', 'Chats always end within 7 days. Either of you can end this one sooner, but nobody can extend it.'));
+      const list = $('div', 'opts');
+      opts.forEach(([h, t]) => { const b = $('button', 'btn soft wide', t); b.onclick = async () => { try { await api(base + '/retention', { hours: h }); haptic('success'); close(); toast('Okay. This chat will be deleted ' + t.toLowerCase() + '.'); load(); } catch (e) { toast(e.message); } }; list.append(b); });
+      box.append(list);
+    });
     const reportSheet = () => sheet('Report this chat', (box, close) => {
       let code = '';
       const note = $('textarea'), err = $('p', 'err', 'Pick a reason first'), list = $('div', 'opts');
@@ -142,15 +178,14 @@
       no.onclick = close; row.append(no, ok);
       box.append($('p', 'fine', "Reports go to the platform's moderators. They only see this chat because you reported it."), list, note, err, row);
     });
-    const blockSheet = () => confirmSheet('Block this visitor?', "They won't be able to start new chats on any of your links.", 'Block', () => act('/block'));
-    const deleteSheet = () => confirmSheet('Delete this chat?', "It disappears for both of you and can't be undone.", 'Delete chat', async () => {
-      try { await api(base + '/leave', {}); onGone && onGone(); } catch (e) { toast(e.message); }
-    });
+    const blockSheet = () => confirmSheet('Block this guest?', "They won't be able to start new chats on any of your links.", 'Block', () => act('/block'));
     moreBtn.onclick = () => popover(moreBtn, (pop, close) => {
       menuItem(pop, close, 'flag', 'Report', reportSheet);
-      if (side === 'o' && st && st.status !== 'blocked') menuItem(pop, close, 'block', 'Block visitor', blockSheet);
-      if (side === 'v' && st && st.resume) menuItem(pop, close, 'link', 'Copy return link', async () => { try { await navigator.clipboard.writeText(location.origin + st.resume); toast('Return link copied. Keep it private.'); } catch (e) { toast("Couldn't copy that"); } });
-      menuItem(pop, close, 'trash', 'Delete chat', deleteSheet, true);
+      menuItem(pop, close, 'eyeoff', 'Privacy mode', privacySheet);
+      menuItem(pop, close, 'clock', 'Delete sooner', retentionSheet);
+      if (side === 'o' && st && st.status !== 'blocked') menuItem(pop, close, 'block', 'Block guest', blockSheet);
+      if (viaLink && st && st.resume) menuItem(pop, close, 'link', 'Copy return link', async () => { try { await navigator.clipboard.writeText(location.origin + st.resume); toast('Return link copied. Keep it private.'); } catch (e) { toast("Couldn't copy that"); } });
+      if (saved) menuItem(pop, close, 'user', 'Remove from my account', async () => { try { await api(base + '/unclaim', {}); onGone && onGone(); } catch (e) { toast(e.message); } });
     });
 
     const load = async () => {
@@ -159,8 +194,10 @@
         st = await api(base + '/state'); render();
         if (was === false && st.reveal.done) haptic('success');
         if (rev) fillReveal();
+        if (!defDone) { defDone = true; if (localStorage.getItem('privacy') === '1' && !st.privacy) { api(base + '/privacy', { on: true }).then(() => { st.privacy = true; }).catch(() => {}); } }
       } catch (e) { if (e.status === 404) onGone && onGone(); }
     };
+    window._exp = setInterval(refresh, 30000);
 
     const es = new EventSource(base + '/stream'); window._es = es;
     es.onopen = load;
@@ -177,11 +214,12 @@
           if (document.hidden && window.Notification && Notification.permission === 'granted') new Notification('New message', { body: 'Open the chat to read it' });
         }
       } else if (d.t === 'typing' && d.side !== side) {
-        typing.hidden = false; bottom(true); sub.textContent = 'typing\u2026';
-        clearTimeout(tTimer); tTimer = setTimeout(() => { typing.hidden = true; resetSub(); }, 3000);
-      } else if (d.t === 'read' && d.s !== side) {
+        typingOn = true; typing.hidden = false; bottom(true); refresh();
+        clearTimeout(tTimer); tTimer = setTimeout(() => { typingOn = false; typing.hidden = true; refresh(); }, 3000);
+      } else if (d.t === 'presence' && d.side !== side) { online = d.on; refresh(); }
+      else if (d.t === 'read' && d.s !== side) {
         msgs.querySelectorAll('.mrow.me .meta').forEach((m) => { m.textContent = m.textContent.replace('Sent', 'Read'); });
-      } else if (d.t === 'reveal' || d.t === 'status') load();
+      } else if (d.t === 'reveal' || d.t === 'status' || d.t === 'retention') load();
       else if (d.t === 'gone') onGone && onGone();
     };
   };
