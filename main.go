@@ -31,6 +31,9 @@ type App struct {
 	rl  *Limiter
 }
 
+// Paths the app already uses, which an admin slug must not collide with.
+var reservedPaths = map[string]bool{"health": true, "static": true}
+
 func loadConfig() Config {
 	c := Config{
 		DatabaseURL: os.Getenv("DATABASE_URL"),
@@ -49,8 +52,11 @@ func loadConfig() Config {
 			log.Fatalf("missing required env var %s (see .env.example)", k)
 		}
 	}
-	if !regexp.MustCompile(`^[A-Za-z0-9_-]{8,64}$`).MatchString(c.AdminPath) {
-		log.Fatal("ADMIN_PATH must be 8-64 characters: letters, digits, - or _")
+	if !regexp.MustCompile(`^[A-Za-z0-9_-]{4,64}$`).MatchString(c.AdminPath) {
+		log.Fatal("ADMIN_PATH must be 4-64 characters: letters, digits, - or _")
+	}
+	if reservedPaths[c.AdminPath] {
+		log.Fatalf("ADMIN_PATH can't be %q because the app already uses it; pick another", c.AdminPath)
 	}
 	if c.Secret == "" {
 		c.Secret = sha256hex(c.AdminPass + "|" + c.DatabaseURL)

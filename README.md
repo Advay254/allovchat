@@ -18,11 +18,11 @@ Open source (MIT). Go + Postgres. One small binary, no front-end build step.
 
 ## Run it
 
-You need a Postgres database (Aiven, Supabase, Neon, your own...). Tables are created automatically on start.
+You need a Postgres database (Aiven, Supabase, Neon, your own...). Tables are created automatically on start. Run it on a host that keeps a long-lived process (a VM, Docker host, Render, Railway, Fly.io...). Serverless platforms such as Vercel are a poor fit.
 
 ```bash
 cp .env.example .env   # fill it in
-go mod tidy            # first time only, creates go.sum
+go mod tidy            # only if go.sum is missing
 set -a; . ./.env; set +a
 go run .
 ```
@@ -38,10 +38,12 @@ On any host that deploys from a GitHub URL or a Dockerfile: point it at this rep
 | `DATABASE_URL` | yes | Postgres connection string |
 | `ADMIN_USERNAME` | yes | Master admin username |
 | `ADMIN_PASSWORD` | yes | Master admin password |
-| `ADMIN_PATH` | yes | Secret slug, 8-64 chars (`a-z A-Z 0-9 - _`). Dashboard is at `/<ADMIN_PATH>/` |
+| `ADMIN_PATH` | yes | Your admin slug, 4-64 chars (`a-z A-Z 0-9 - _`), not `health` or `static`. Dashboard is at `/<ADMIN_PATH>/` |
 | `BASE_URL` | yes | Public URL, no trailing slash. `https://` enables Secure cookies |
 | `PORT` | no | Default `8080` |
 | `SESSION_SECRET` | no | Cookie signing key; derived from the admin password if empty |
+
+Short slugs are easier to guess, so the admin login (rate limited) and a strong `ADMIN_PASSWORD` are what really protect the dashboard.
 
 Everything else (site name, tagline, announcement banner, sign-ups on/off, maintenance mode, message length, retention days, link limits, rate limits) is changed live in the admin dashboard.
 
