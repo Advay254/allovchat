@@ -1,0 +1,155 @@
+const $=id=>document.getElementById(id);
+const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
+const TABS=[['chats','Chats','chat'],['links','Links','link'],['settings','Settings','gear']];
+let pub={},cur=null,mode='login',last=null,first=true,tab='chats';
+const origin=()=>pub.base_url||location.origin;
+const ago=ts=>{const s=(Date.now()-new Date(ts))/1000;if(s<60)return 'now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d'};
+const skel=n=>{const f=document.createDocumentFragment();for(let i=0;i<n;i++){const r=el('div','row-item static'),a=el('span','sk'),b=el('div','grow'),l1=el('div','sk'),l2=el('div','sk');a.style.cssText='width:44px;height:44px;border-radius:50%';l1.style.cssText='height:14px;width:50%;margin-bottom:8px';l2.style.cssText='height:12px;width:78%';b.append(l1,l2);r.append(a,b);f.append(r)}return f};
+const placeholder=()=>{const c=$('chatview');c.textContent='';c.append(el('p','chat-empty','Pick a chat to read it.'))};
+
+function setMode(m){mode=m;$('atitle').textContent=m==='login'?'Welcome back':'Create your account';$('abtn').textContent=m==='login'?'Sign in':'Create account';$('switch').textContent=m==='login'?'Create an account':'I already have an account';$('ap').autocomplete=m==='login'?'current-password':'new-password'}
+$('switch').onclick=()=>setMode(mode==='login'?'register':'login');
+
+// After too many wrong passwords the button counts down instead of letting people keep guessing.
+function lockout(sec){
+  const b=$('abtn'),label=mode==='login'?'Sign in':'Create account';let s=sec;b.disabled=true;
+  $('aerr').textContent='Too many attempts. Please wait before trying again.';$('aerr').hidden=false;
+  const tick=()=>{if(s<=0){b.disabled=false;b.textContent=label;$('aerr').hidden=true;return}
+    b.textContent='Try again in '+Math.floor(s/60)+':'+String(s%60).padStart(2,'0');s--;setTimeout(tick,1000)};
+  tick();
+}
+$('af').onsubmit=async e=>{e.preventDefault();$('aerr').hidden=true;const b=$('abtn');b.setAttribute('aria-busy','true');
+  try{
+    const r=await fetch('/api/'+mode,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({username:$('au').value,password:$('ap').value})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){location.reload();return}
+    b.removeAttribute('aria-busy');
+    if(r.status===429&&j.retry_after){lockout(j.retry_after)}
+    else{$('aerr').textContent=j.error||'Something went wrong. Please try again.';$('aerr').hidden=false;shake($('af'))}
+  }catch(er){b.removeAttribute('aria-busy');$('aerr').textContent='Network problem. Check your connection and try again.';$('aerr').hidden=false}};
+$('lf').onsubmit=async e=>{e.preventDefault();$('lerr').hidden=true;
+  try{await api('/api/links',{label:$('ll').value});$('ll').value='';haptic('success');loadLinks()}
+  catch(er){$('lerr').textContent=er.message;$('lerr').hidden=false;shake($('lf'))}};
+
+function buildTabs(){const nav=$('tabbar');TABS.forEach(([k,t,i])=>{const b=el('button','tab');b.id='t-'+k;b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===tab));b.innerHTML=ico(i,24)+'<span>'+t+'</span>';b.onclick=()=>setTab(k);nav.append(b)})}
+function setTab(k){if(k===tab)return;
+  vt(()=>{tab=k;TABS.forEach(([n])=>{$('tab-'+n).hidden=n!==k;$('t-'+n).setAttribute('aria-selected',String(n===k))});$('tabtitle').textContent=TABS.find(x=>x[0]===k)[1];scrollTo(0,0)});
+  if(k==='settings')loadSettings();if(k==='links')loadLinks()}
+function setBadge(n){const t=$('t-chats');let b=t.querySelector('.badge');if(n>0){if(!b){b=el('span','badge');t.append(b)}b.textContent=n>99?'99+':n}else if(b)b.remove()}
+
+function emptyInbox(){
+  const d=el('div','empty');
+  d.innerHTML='<svg width="96" height="72" viewBox="0 0 96 72" fill="none" aria-hidden="true"><rect x="6" y="6" width="56" height="34" rx="12" style="fill:var(--line)"/><rect x="34" y="32" width="56" height="34" rx="12" style="fill:var(--pri)"/><circle cx="48" cy="49" r="3" fill="#fff"/><circle cx="62" cy="49" r="3" fill="#fff"/><circle cx="76" cy="49" r="3" fill="#fff"/></svg>';
+  d.append(el('p',null,'No chats yet. Make a link and share it to get started.'));return d;
+}
+function notifyMaybe(ts){
+  const req=ts.filter(t=>t.status==='pending').length,un=ts.reduce((n,t)=>n+Number(t.unread),0);
+  if(last&&document.hidden&&'Notification' in window&&Notification.permission==='granted'&&localStorage.getItem('alerts')!=='0'&&(req>last.req||un>last.un)){new Notification(pub.name,{body:req>last.req?'You have a new chat request':'You have a new message'})}
+  last={req,un};setBadge(req+un);
+}
+async function loadThreads(){
+  let ts;try{ts=await api('/api/threads')}catch(e){if(e.status===401)location.reload();return}
+  notifyMaybe(ts);
+  const box=$('threads');box.textContent='';box.classList.toggle('stag',first);
+  if(!ts.length)box.append(emptyInbox());
+  ts.forEach(t=>{
+    const b=el('button','row-item'+(t.id===cur?' on':'')),m=el('div','grow'),top=el('div','row-top');
+    top.append(el('b',null,t.alias),el('span','fine',ago(t.last_at)));
+    m.append(top,el('div','fine ellip',t.label+' \u00b7 '+(t.status==='pending'?'Request: ':'')+t.preview));
+    b.append(avatar(t.alias),m);
+    if(t.unread>0||t.status==='pending'){const d=el('span','dot');d.setAttribute('role','img');d.setAttribute('aria-label',t.status==='pending'?'New request':'Unread messages');b.append(d)}
+    b.onclick=()=>select(t.id);box.append(b)});
+  if(first){stagger(box);first=false}
+}
+function select(id){cur=id;haptic('select');document.body.classList.add('chat-open');mountChat($('chatview'),'/api/t/'+id,'o',closeChat,closeChat);loadThreads()}
+function closeChat(){cur=null;document.body.classList.remove('chat-open');if(window._es){window._es.close();window._es=null}setTimeout(()=>{if(!cur)placeholder()},320);loadThreads()}
+
+function shareSheet(l){
+  const u=origin()+'/l/'+l.slug;
+  sheet('Share your link',(box,close)=>{
+    // The QR code is drawn by the server, so no outside script runs in this page.
+    const qr=el('div','qr'),img=new Image();img.width=200;img.height=200;img.alt='QR code for '+l.label;img.src='/api/links/'+l.id+'/qr.png';qr.append(img);
+    const row=el('div','row'),cp=el('button','btn','Copy link'),dl=el('button','btn soft','Share card');
+    cp.onclick=async()=>{try{await navigator.clipboard.writeText(u);cp.textContent='Copied';haptic('success');pulse(cp)}catch(e){toast("Couldn't copy that")}};
+    dl.onclick=()=>shareCard(l,u,img);row.append(cp,dl);
+    box.append(qr,el('p','fine center',u.replace(/^https?:\/\//,'')),row);
+  });
+}
+async function shareCard(l,u,img){
+  try{await img.decode()}catch(e){toast('The QR code is still loading');return}
+  const c=document.createElement('canvas');c.width=1080;c.height=1350;const g=c.getContext('2d');
+  g.fillStyle='#F6F1E7';g.fillRect(0,0,1080,1350);g.textAlign='center';
+  g.fillStyle='#231F20';g.font='600 64px Georgia, serif';g.fillText('Chat with me privately',540,260);
+  g.fillStyle='#6B6459';g.font='400 40px system-ui, sans-serif';g.fillText(l.label.slice(0,40),540,340);
+  g.fillStyle='#fff';g.fillRect(290,430,500,500);g.drawImage(img,315,455,450,450);
+  g.fillStyle='#231F20';g.font='600 36px system-ui, sans-serif';g.fillText(u.replace(/^https?:\/\//,''),540,1030);
+  g.fillStyle='#6B6459';g.font='400 32px system-ui, sans-serif';g.fillText('No account needed. Your real profile stays private.',540,1110);
+  const a=document.createElement('a');a.download='share-card.png';a.href=c.toDataURL('image/png');a.click();haptic('success');
+}
+function editSheet(l){
+  sheet('Edit link',(box,close)=>{
+    const f=el('form');f.style.cssText='display:flex;flex-direction:column;gap:12px';
+    const mk=(lab,inp)=>{const w=el('label','field',lab);w.append(inp);f.append(w);return inp};
+    const label=mk('Name',el('input'));label.value=l.label;label.maxLength=60;label.required=true;
+    const welcome=mk('Welcome message visitors see',el('textarea'));welcome.value=l.welcome;welcome.rows=3;welcome.maxLength=280;
+    const about=mk('What you are chatting about (optional)',el('input'));about.value=l.about;about.maxLength=120;
+    const auto=mk('Auto-reply for new requests (optional)',el('input'));auto.value=l.autoreply;auto.maxLength=200;
+    const hrs=()=>{const s=el('select');s.append(new Option('Off',-1));for(let h=0;h<24;h++)s.append(new Option(String(h).padStart(2,'0')+':00',h));return s};
+    const qs=mk('Quiet hours start',hrs());qs.value=l.quiet_start;
+    const qe=mk('Quiet hours end',hrs());qe.value=l.quiet_end;
+    const err=el('p','err');err.hidden=true;err.setAttribute('role','alert');
+    const row=el('div','row'),x=el('button','btn soft','Cancel'),ok=el('button','btn','Save');ok.type='submit';x.type='button';x.onclick=close;row.append(x,ok);
+    f.append(err,row);
+    f.onsubmit=async e=>{e.preventDefault();
+      try{await api('/api/links/'+l.id+'/edit',{label:label.value,welcome:welcome.value,about:about.value,autoreply:auto.value,quiet_start:+qs.value,quiet_end:+qe.value,tz:new Date().getTimezoneOffset()});haptic('success');close();loadLinks()}
+      catch(er){err.textContent=er.message;err.hidden=false;shake(f)}};
+    box.append(f);
+  });
+}
+async function loadLinks(){
+  const box=$('links');let ls;
+  try{ls=await api('/api/links')}catch(e){return}
+  box.textContent='';box.classList.add('stag');
+  if(!ls.length)box.append(el('p','fine center pad','Create your first link above, then share it anywhere.'));
+  ls.forEach(l=>{
+    const u=origin()+'/l/'+l.slug,r=el('div','row-item static'),m=el('div','grow');
+    m.append(el('b',null,l.label),el('div','fine ellip',u.replace(/^https?:\/\//,'')),el('div','fine',(l.active?'':'Paused \u00b7 ')+l.chats+(l.chats===1?' chat':' chats')));
+    const cp=el('button','icon-btn');cp.innerHTML='<span class="ic">'+ico('copy')+'</span>';cp.setAttribute('aria-label','Copy link');cp.onclick=()=>copyBtn(cp,u);
+    const mb=el('button','icon-btn');mb.innerHTML=ico('more');mb.setAttribute('aria-label','Link options');mb.setAttribute('aria-haspopup','menu');
+    mb.onclick=()=>popover(mb,(pop,close)=>{
+      menuItem(pop,close,'share','Share\u2026',()=>shareSheet(l));
+      menuItem(pop,close,'edit','Edit details',()=>editSheet(l));
+      menuItem(pop,close,l.active?'block':'check',l.active?'Pause link':'Resume link',async()=>{await api('/api/links/'+l.id+'/toggle',{});loadLinks()});
+      menuItem(pop,close,'trash','Delete link',()=>confirmSheet('Delete this link?','The link and all of its chats will be removed.','Delete link',async()=>{await api('/api/links/'+l.id+'/delete',{});loadLinks();loadThreads()}),true);
+    });
+    r.append(m,cp,mb);box.append(r)});
+  stagger(box);
+}
+async function loadSettings(){
+  const box=$('settings');box.textContent='';box.classList.add('stag');
+  const row=(title,sub,right)=>{const r=el('div','row-item static'),m=el('div','grow');m.append(el('b',null,title));if(sub)m.append(el('div','fine',sub));r.append(m);if(right)r.append(right);box.append(r);return r};
+  const alertsOn=()=>'Notification' in window&&Notification.permission==='granted'&&localStorage.getItem('alerts')!=='0';
+  row('Browser alerts','New requests and messages while a tab is open',switchEl(alertsOn(),async v=>{
+    if(!v){localStorage.setItem('alerts','0');return true}
+    if(!('Notification' in window)){toast('Alerts are not supported in this browser');return false}
+    const p=await Notification.requestPermission();
+    if(p!=='granted'){toast('Alerts are blocked in your browser settings');return false}
+    localStorage.setItem('alerts','1');return true},'Browser alerts'));
+  row('Haptics','Short vibrations on phones that support them',switchEl(localStorage.getItem('haptics')!=='0',v=>{localStorage.setItem('haptics',v?'1':'0');if(v)haptic('success');return true},'Haptics'));
+  let n=0;try{n=(await api('/api/blocks')).count}catch(e){}
+  const bl=el('button','btn soft sm','Clear');bl.onclick=()=>confirmSheet('Clear blocked visitors?','They will be able to start chats with you again.','Clear all',async()=>{await api('/api/blocks/clear',{});loadSettings()});
+  row('Blocked visitors',n?n+(n===1?' person':' people'):'Nobody blocked',n?bl:null);
+  const so=el('button','btn soft sm','Sign out');so.onclick=async()=>{await api('/api/logout',{});location.reload()};
+  row('Account',null,so);
+  stagger(box);
+}
+async function boot(){
+  pub=await api('/api/public');
+  document.title=pub.name+': inbox';
+  if(pub.announcement){$('banner').textContent=pub.announcement;$('banner').hidden=false}
+  $('switch').hidden=!pub.registration_open;
+  try{await api('/api/me');$('shell').hidden=false;buildTabs();placeholder();
+    $('threads').append(skel(3));loadThreads();setInterval(loadThreads,4000)}
+  catch(e){$('auth').hidden=false}
+}
+boot();

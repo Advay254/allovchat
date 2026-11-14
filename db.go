@@ -26,7 +26,9 @@ ALTER TABLE links ADD COLUMN IF NOT EXISTS quiet_end INT NOT NULL DEFAULT -1;
 ALTER TABLE links ADD COLUMN IF NOT EXISTS tz INT NOT NULL DEFAULT 0;
 ALTER TABLE threads ADD COLUMN IF NOT EXISTS vid_hash TEXT NOT NULL DEFAULT '';
 CREATE TABLE IF NOT EXISTS blocks(owner_id BIGINT NOT NULL REFERENCES owners(id) ON DELETE CASCADE, vid_hash TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), PRIMARY KEY(owner_id, vid_hash));
-CREATE TABLE IF NOT EXISTS audit(id BIGSERIAL PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());`
+CREATE TABLE IF NOT EXISTS audit(id BIGSERIAL PRIMARY KEY, action TEXT NOT NULL, detail TEXT NOT NULL DEFAULT '', created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS sessions(id TEXT PRIMARY KEY, kind TEXT NOT NULL, owner_id BIGINT REFERENCES owners(id) ON DELETE CASCADE, expires_at TIMESTAMPTZ NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE INDEX IF NOT EXISTS sessions_exp ON sessions(expires_at);`
 
 func (a *App) migrate(ctx context.Context) error {
 	for _, s := range strings.Split(schema, ";") {
@@ -44,16 +46,16 @@ func (a *App) migrate(ctx context.Context) error {
 var settingMeta = []struct{ Key, Label, Kind string }{
 	{"site_name", "Site name", "text"},
 	{"tagline", "Tagline", "text"},
-	{"announcement", "Announcement banner (empty = none)", "text"},
-	{"registration_open", "Allow new owner sign-ups", "bool"},
-	{"maintenance", "Maintenance mode (public site returns 503)", "bool"},
+	{"announcement", "Announcement banner", "text"},
+	{"registration_open", "Allow new sign-ups", "bool"},
+	{"maintenance", "Maintenance mode", "bool"},
 	{"max_msg_len", "Max message length", "num"},
-	{"retention_days", "Delete chats after N days of inactivity", "num"},
+	{"retention_days", "Delete inactive chats after (days)", "num"},
 	{"max_links_per_owner", "Max links per owner", "num"},
-	{"msgs_per_min", "Messages per minute per person", "num"},
-	{"banned_words", "Banned words (separate with commas or new lines)", "area"},
-	{"turnstile_site", "Cloudflare Turnstile site key", "text"},
-	{"turnstile_secret", "Cloudflare Turnstile secret key", "secret"},
+	{"msgs_per_min", "Messages per minute", "num"},
+	{"banned_words", "Banned words", "area"},
+	{"turnstile_site", "Turnstile site key", "text"},
+	{"turnstile_secret", "Turnstile secret key", "secret"},
 }
 
 var defaults = map[string]string{
@@ -98,6 +100,8 @@ func (a *App) loadSettings(ctx context.Context) {
 			}
 		}
 		rows.Close()
+	} else {
+		logErr("load settings", err)
 	}
 	a.set.mu.Lock()
 	a.set.m = m
@@ -105,21 +109,22 @@ func (a *App) loadSettings(ctx context.Context) {
 }
 
 func (a *App) saveSetting(ctx context.Context, k, v string) {
-	a.db.Exec(ctx, `INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`, k, v)
+	a.exec(ctx, "save setting", `INSERT INTO settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO UPDATE SET value=EXCLUDED.value`, k, v)
 }
 
 func (a *App) audit(ctx context.Context, action, detail string) {
-	a.db.Exec(ctx, `INSERT INTO audit(action,detail) VALUES($1,$2)`, action, detail)
+	a.exec(ctx, "audit", `INSERT INTO audit(action,detail) VALUES($1,$2)`, action, detail)
 }
 
-// janitor deletes inactive chats and expires revealed contacts.
+// janitor deletes inactive chats and expired sessions, and expires revealed contacts.
 func (a *App) janitor(ctx context.Context) {
 	t := time.NewTicker(time.Hour)
 	defer t.Stop()
 	for {
-		a.db.Exec(ctx, `DELETE FROM threads WHERE last_at < now() - make_interval(days => $1::int)`, a.set.num("retention_days"))
-		a.db.Exec(ctx, `UPDATE threads SET owner_contact='', visitor_contact='' WHERE revealed_at < now() - interval '24 hours' AND (owner_contact<>'' OR visitor_contact<>'')`)
-		a.db.Exec(ctx, `DELETE FROM audit WHERE created_at < now() - interval '180 days'`)
+		a.exec(ctx, "janitor chats", `DELETE FROM threads WHERE last_at < now() - make_interval(days => $1::int)`, a.set.num("retention_days"))
+		a.exec(ctx, "janitor contacts", `UPDATE threads SET owner_contact='', visitor_contact='' WHERE revealed_at < now() - interval '24 hours' AND (owner_contact<>'' OR visitor_contact<>'')`)
+		a.exec(ctx, "janitor audit", `DELETE FROM audit WHERE created_at < now() - interval '180 days'`)
+		a.exec(ctx, "janitor sessions", `DELETE FROM sessions WHERE expires_at < now()`)
 		select {
 		case <-ctx.Done():
 			return

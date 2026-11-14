@@ -8,20 +8,39 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
+
+	qrcode "github.com/skip2/go-qrcode"
 )
 
 func (a *App) featureRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/links/{id}/edit", a.editLink)
+	mux.HandleFunc("GET /api/links/{id}/qr.png", a.linkQR)
 	mux.HandleFunc("GET /api/blocks", a.blockCount)
 	mux.HandleFunc("POST /api/blocks/clear", a.blockClear)
 	mux.HandleFunc("GET /r/{slug}/{token}", a.resume)
 }
 
+// clean removes invalid UTF-8, null bytes, control characters and text-direction overrides from user input.
+func clean(s string) string {
+	s = strings.ToValidUTF8(s, "")
+	s = strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n' || r == '\t':
+			return r
+		case unicode.IsControl(r), r >= 0x202A && r <= 0x202E, r >= 0x2066 && r <= 0x2069, r == 0xFEFF:
+			return -1
+		}
+		return r
+	}, s)
+	return strings.TrimSpace(s)
+}
+
 func clip(s string, n int) string {
-	s = strings.TrimSpace(s)
+	s = clean(s)
 	if utf8.RuneCountInString(s) > n {
-		s = string([]rune(s)[:n])
+		s = strings.TrimSpace(string([]rune(s)[:n]))
 	}
 	return s
 }
@@ -47,13 +66,14 @@ func (a *App) banned(s string) bool {
 	return false
 }
 
-// turnstileOK verifies a Cloudflare Turnstile token. With no secret configured it always passes.
+// turnstileOK verifies a Cloudflare Turnstile token on the server. The secret key never reaches the browser.
+// With no secret configured it always passes.
 func (a *App) turnstileOK(r *http.Request, token string) bool {
 	secret := a.set.get("turnstile_secret")
 	if secret == "" {
 		return true
 	}
-	if token == "" {
+	if token == "" || len(token) > 4096 {
 		return false
 	}
 	ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
@@ -66,11 +86,12 @@ func (a *App) turnstileOK(r *http.Request, token string) bool {
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
+		logErr("turnstile", err)
 		return false
 	}
 	defer resp.Body.Close()
 	var out struct{ Success bool }
-	json.NewDecoder(resp.Body).Decode(&out)
+	json.NewDecoder(http.MaxBytesReader(nil, resp.Body, 64<<10)).Decode(&out)
 	return out.Success
 }
 
@@ -103,7 +124,11 @@ func (a *App) editLink(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	id, _ := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 404, "Not found")
+		return
+	}
 	var in struct {
 		Label      string `json:"label"`
 		Welcome    string `json:"welcome"`
@@ -118,12 +143,41 @@ func (a *App) editLink(w http.ResponseWriter, r *http.Request) {
 	}
 	label := clip(in.Label, 60)
 	if label == "" || in.QuietStart < -1 || in.QuietStart > 23 || in.QuietEnd < -1 || in.QuietEnd > 23 || in.Tz < -840 || in.Tz > 840 {
-		fail(w, 400, "Check the label and quiet hours")
+		fail(w, 400, "Check the name and quiet hours")
 		return
 	}
-	a.db.Exec(r.Context(), `UPDATE links SET label=$3, welcome=$4, about=$5, autoreply=$6, quiet_start=$7, quiet_end=$8, tz=$9 WHERE id=$1 AND owner_id=$2`,
-		id, oid, label, clip(in.Welcome, 280), clip(in.About, 120), clip(in.Autoreply, 200), in.QuietStart, in.QuietEnd, in.Tz)
+	if !a.exec(r.Context(), "edit link", `UPDATE links SET label=$3, welcome=$4, about=$5, autoreply=$6, quiet_start=$7, quiet_end=$8, tz=$9 WHERE id=$1 AND owner_id=$2`,
+		id, oid, label, clip(in.Welcome, 280), clip(in.About, 120), clip(in.Autoreply, 200), in.QuietStart, in.QuietEnd, in.Tz) {
+		fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
+		return
+	}
 	jsonOut(w, 200, map[string]any{"ok": true})
+}
+
+// linkQR draws the QR code on the server, so no third-party script runs inside the signed-in app.
+func (a *App) linkQR(w http.ResponseWriter, r *http.Request) {
+	oid, ok := a.owner(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 404, "Not found")
+		return
+	}
+	var slug string
+	if a.db.QueryRow(r.Context(), `SELECT slug FROM links WHERE id=$1 AND owner_id=$2`, id, oid).Scan(&slug) != nil {
+		fail(w, 404, "Not found")
+		return
+	}
+	data, err := qrcode.Encode(a.base(r)+"/l/"+slug, qrcode.Medium, 512)
+	if err != nil {
+		a.fail500(w, "qr", err)
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "private, max-age=3600")
+	w.Write(data)
 }
 
 func (a *App) blockCount(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +186,10 @@ func (a *App) blockCount(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var n int
-	a.db.QueryRow(r.Context(), `SELECT count(*) FROM blocks WHERE owner_id=$1`, oid).Scan(&n)
+	if err := a.db.QueryRow(r.Context(), `SELECT count(*) FROM blocks WHERE owner_id=$1`, oid).Scan(&n); err != nil {
+		a.fail500(w, "block count", err)
+		return
+	}
 	jsonOut(w, 200, map[string]any{"count": n})
 }
 
@@ -141,14 +198,14 @@ func (a *App) blockClear(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.db.Exec(r.Context(), `DELETE FROM blocks WHERE owner_id=$1`, oid)
+	a.exec(r.Context(), "clear blocks", `DELETE FROM blocks WHERE owner_id=$1`, oid)
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
 // resume restores a visitor's chat on a new device or after cookies were cleared.
 func (a *App) resume(w http.ResponseWriter, r *http.Request) {
 	slug, tok := r.PathValue("slug"), r.PathValue("token")
-	if a.rl.allow("res:"+clientIP(r), 30, time.Hour) {
+	if a.rl.allow("res:"+clientIP(r), 30, time.Hour) && len(tok) == 32 {
 		var n int
 		if a.db.QueryRow(r.Context(), `SELECT 1 FROM threads t JOIN links l ON l.id=t.link_id WHERE l.slug=$1 AND t.token_hash=$2`, slug, sha256hex(tok)).Scan(&n) == nil {
 			a.setCookie(w, "v_"+slug, tok, 30*86400, false)
