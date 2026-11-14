@@ -2,7 +2,10 @@ module github.com/Advay254/allovchat
 
 go 1.24
 
-require github.com/jackc/pgx/v5 v5.7.2
+require (
+	github.com/jackc/pgx/v5 v5.7.2
+	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
+)
 
 require (
 	github.com/jackc/pgpassfile v1.0.0 // indirect
