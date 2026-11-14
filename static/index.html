@@ -1,40 +1,36 @@
-<!doctype html>
-<html lang="en">
-<head>
-<meta charset="utf-8">
-<meta name="viewport" content="width=device-width,initial-scale=1">
-<title>allovchat: anonymous chat links</title>
-<meta name="description" content="Share a link, chat anonymously, and reveal your contact only when you both trust each other.">
-<link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-<header class="top"><b id="brand">allovchat</b><span class="grow"></span><a class="btn ghost sm" href="/app" style="display:inline-flex;align-items:center;text-decoration:none">Sign in</a></header>
-<div class="wrap">
-<div id="banner" class="banner" role="status" hidden></div>
-<section class="hero">
-<h1>Chat anonymously. Reveal only when you trust each other.</h1>
-<p id="tag" class="fine" style="font-size:18px;max-width:560px;margin:0 auto 24px"></p>
-<a class="btn" href="/app" style="display:inline-flex;align-items:center;text-decoration:none">Create your link</a>
-</section>
-<section class="grid3">
-<div class="card"><h3>1. Create a link</h3><p class="fine">Make one link per topic, post or community. Pause or delete it any time.</p></div>
-<div class="card"><h3>2. Share it anywhere</h3><p class="fine">People who open it message you without an account. You accept or block each request.</p></div>
-<div class="card"><h3>3. Chat, then reveal</h3><p class="fine">When you both agree, share a WhatsApp number or handle once. It disappears after 24 hours.</p></div>
-</section>
-<section class="card">
-<h2>Built for privacy-minded people</h2>
-<p>Ask about a sensitive topic or product without handing strangers your real accounts. Visitors never sign up, you never see who they are, and nobody can dig through a profile you haven't shared.</p>
-<p class="fine">Heads up: chats aren't end-to-end encrypted, and old ones are deleted automatically.</p>
-</section>
-<p class="fine" style="text-align:center">Free and open source (MIT) &middot; <a href="https://github.com/Advay254/allovchat">GitHub</a></p>
+{{define "content"}}
+<section class="site hero">
+<div>
+<h1 class="rise" style="--i:0">Start a private chat from a link. Share your contact only if you both want to.</h1>
+<p class="lede rise" style="--i:1">Post your link in a group, a bio or a listing. People write to you without an account, and neither of you has to hand over a real profile first.</p>
+<div class="cta-row rise" style="--i:2"><a class="btn" href="/app">Create your link</a><a class="btn ghost" href="#how">How it works</a></div>
 </div>
-<script>
-fetch('/api/public').then(r=>r.json()).then(p=>{
-  document.getElementById('brand').textContent=p.name;
-  document.getElementById('tag').textContent=p.tagline;
-  document.title=p.name+': anonymous chat links';
-  if(p.announcement){const b=document.getElementById('banner');b.textContent=p.announcement;b.hidden=false}
-}).catch(()=>{});
-</script>
-</body>
-</html>
+<div class="phone rise" style="--i:3" aria-hidden="true">
+<div class="phone-top"><span class="av" style="background:#4A5E94">Q</span><div><b>Quiet Fox</b><small>Anonymous chat</small></div></div>
+<div class="mock">
+<div class="mrow them"><div class="m them end">Hi, is the bike still for sale?</div></div>
+<div class="mrow me"><div class="m me end">Yes, happy to answer anything.</div></div>
+<div class="mrow them"><div class="m them end">Great. Can we move to WhatsApp?</div></div>
+<div class="reveal-card"><b>You both agreed</b><span>@maya.rides</span><small>Shown once, gone in 24 hours</small></div>
+</div>
+</div>
+</section>
+<section class="site section" id="how">
+<h2 class="rv">How it works</h2>
+<ol class="steps">
+<li class="rv"><span class="n">1</span><div><h3>Make a link</h3><p>Name it after the post or group it's for. You can have several, and pause any of them whenever you like.</p></div></li>
+<li class="rv"><span class="n">2</span><div><h3>Share it anywhere</h3><p>Visitors type a message and send it. No sign-up. You see a request, and nothing reaches you until you accept it.</p></div></li>
+<li class="rv"><span class="n">3</span><div><h3>Talk, then decide</h3><p>Chat as long as you like. If you both want to move to WhatsApp or anywhere else, you each agree and the details appear once.</p></div></li>
+</ol>
+</section>
+<section class="site section">
+<h2 class="rv">Nobody gets your details by default</h2>
+<ul class="checks">
+<li class="rv">You approve every chat before it starts.</li>
+<li class="rv">Block someone and they can't reach any of your links.</li>
+<li class="rv">Contact details show only after you both say yes, and vanish after 24 hours.</li>
+<li class="rv">Chats aren't end-to-end encrypted, and inactive ones are deleted automatically.</li>
+</ul>
+</section>
+<section class="site section tight"><div class="band rv"><h2>Make your first link in under a minute.</h2><a class="btn" href="/app">Create your link</a></div></section>
+{{end}}

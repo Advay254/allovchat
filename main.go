@@ -32,7 +32,7 @@ type App struct {
 }
 
 // Paths the app already uses, which an admin slug must not collide with.
-var reservedPaths = map[string]bool{"health": true, "static": true}
+var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true}
 
 func loadConfig() Config {
 	c := Config{
@@ -101,10 +101,10 @@ func main() {
 func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.health)
-	mux.HandleFunc("GET /{$}", a.page("index.html"))
 	mux.HandleFunc("GET /app", a.page("app.html"))
 	mux.HandleFunc("GET /l/{slug}", a.page("chat.html"))
 	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	a.siteRoutes(mux)
 	a.apiRoutes(mux)
 	ap := "/" + a.cfg.AdminPath
 	mux.HandleFunc(ap, func(w http.ResponseWriter, r *http.Request) { http.Redirect(w, r, ap+"/", http.StatusFound) })
