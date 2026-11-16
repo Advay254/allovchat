@@ -110,20 +110,28 @@ func (a *App) startOwner(w http.ResponseWriter, r *http.Request, id int64) error
 
 func (a *App) endSession(r *http.Request, cookie string) {
 	if c, err := r.Cookie(cookie); err == nil && len(c.Value) == 48 {
-		a.exec(r.Context(), "end session", `DELETE FROM sessions WHERE id=$1`, sha256hex(c.Value))
+		h := sha256hex(c.Value)
+		a.cache.del("s:" + h)
+		a.exec(r.Context(), "end session", `DELETE FROM sessions WHERE id=$1`, h)
 	}
 }
 
-// ownerID returns the signed-in account's id, or 0.
+// ownerID returns the signed-in account's id, or 0. This runs on almost every request, so a successful
+// lookup is kept for 20 seconds. Logging out, disabling or deleting an account clears the cache straight away.
 func (a *App) ownerID(r *http.Request) int64 {
 	c, err := r.Cookie("os")
 	if err != nil || len(c.Value) != 48 {
 		return 0
 	}
+	key := "s:" + sha256hex(c.Value)
+	if v, ok := a.cache.get(key); ok {
+		return v.(int64)
+	}
 	var id int64
 	if a.db.QueryRow(r.Context(), `SELECT s.owner_id FROM sessions s JOIN owners o ON o.id=s.owner_id WHERE s.id=$1 AND s.kind='owner' AND s.expires_at>now() AND NOT o.disabled`, sha256hex(c.Value)).Scan(&id) != nil {
 		return 0
 	}
+	a.cache.set(key, id, 20*time.Second)
 	return id
 }
 
@@ -256,7 +264,7 @@ func (f *FailLimiter) reset(keys ...string) {
 
 // loginWait locks a sign-in after 5 failures from the same account and IP, or 20 from one IP.
 // The per-account counter (acct) never locks anyone out on its own, so a stranger can't lock a real person out
-// from their own devices. Callers use acctFailures to ask for a human check instead.
+// from their own devices. Callers use it to ask for a human check instead.
 func (a *App) loginWait(user, ip string) (pair, acct, byIP string, wait time.Duration) {
 	pair, acct, byIP = "p:"+user+"|"+ip, "a:"+user, "i:"+ip
 	wait = max(a.fails.wait(pair, 5), a.fails.wait(byIP, 20))

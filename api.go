@@ -103,7 +103,7 @@ func fail(w http.ResponseWriter, code int, msg string) { jsonOut(w, code, map[st
 // readJSON decodes one JSON object into a typed struct. Unknown fields and trailing data are rejected,
 // so a client can never set fields the handler didn't ask for.
 func readJSON(w http.ResponseWriter, r *http.Request, v any) bool {
-	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
 	dec := json.NewDecoder(r.Body)
 	dec.DisallowUnknownFields()
 	if dec.Decode(v) != nil || dec.More() {
@@ -158,7 +158,7 @@ func randAlias() string {
 	return adjs[mrand.IntN(len(adjs))] + " " + birds[mrand.IntN(len(birds))]
 }
 
-const activeLink = `SELECT l.id, l.label, l.welcome, l.about, l.ttl_hours FROM links l JOIN owners o ON o.id=l.owner_id WHERE l.slug=$1 AND l.active AND NOT o.disabled`
+const activeLink = `SELECT l.id, l.label, l.welcome, l.about, l.ttl_hours, l.pubkey FROM links l JOIN owners o ON o.id=l.owner_id WHERE l.slug=$1 AND l.active AND NOT o.disabled`
 
 func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/public", a.publicInfo)
@@ -168,7 +168,6 @@ func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/me", a.me)
 	mux.HandleFunc("GET /api/links", a.listLinks)
 	mux.HandleFunc("POST /api/links", a.createLink)
-	mux.HandleFunc("POST /api/links/{id}/toggle", a.linkAct(`UPDATE links SET active = NOT active WHERE id=$1 AND owner_id=$2`))
 	mux.HandleFunc("POST /api/links/{id}/delete", a.linkAct(`DELETE FROM links WHERE id=$1 AND owner_id=$2`))
 	mux.HandleFunc("POST /api/t/{id}/accept", a.ownerAct("open"))
 	mux.HandleFunc("POST /api/t/{id}/block", a.ownerAct("blocked"))
@@ -185,9 +184,9 @@ func (a *App) publicInfo(w http.ResponseWriter, r *http.Request) {
 	if a.set.get("turnstile_secret") != "" {
 		site = a.set.get("turnstile_site") // the public site key only; the secret never leaves the server
 	}
-	jsonOut(w, 200, map[string]any{"name": a.set.get("site_name"), "tagline": a.set.get("tagline"),
+	jsonCached(w, map[string]any{"name": a.set.get("site_name"), "tagline": a.set.get("tagline"),
 		"announcement": a.set.get("announcement"), "registration_open": a.set.get("registration_open") == "1",
-		"base_url": a.cfg.BaseURL, "turnstile_site": site})
+		"base_url": a.cfg.BaseURL, "turnstile_site": site}, 30)
 }
 
 // ---------- accounts ----------
@@ -308,12 +307,16 @@ func (a *App) me(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, map[string]any{"username": u})
 }
 
+// listLinks joins a per-link chat count in one query instead of counting per row.
 func (a *App) listLinks(w http.ResponseWriter, r *http.Request) {
 	id, ok := a.owner(w, r)
 	if !ok {
 		return
 	}
-	out, err := a.rowsOut(r.Context(), `SELECT l.id, l.slug, l.label, l.active, l.welcome, l.about, l.autoreply, l.quiet_start, l.quiet_end, l.ttl_hours, (SELECT count(*) FROM threads t WHERE t.link_id=l.id AND t.expires_at>now()) AS chats FROM links l WHERE l.owner_id=$1 ORDER BY l.id DESC`, id)
+	out, err := a.rowsOut(r.Context(), `SELECT l.id, l.slug, l.label, l.active, l.welcome, l.about, l.autoreply, l.quiet_start, l.quiet_end, l.ttl_hours, l.pubkey, COALESCE(c.n,0) AS chats
+		FROM links l
+		LEFT JOIN (SELECT t.link_id, count(*) AS n FROM threads t JOIN links x ON x.id=t.link_id WHERE x.owner_id=$1 AND t.expires_at>now() GROUP BY t.link_id) c ON c.link_id=l.id
+		WHERE l.owner_id=$1 ORDER BY l.id DESC`, id)
 	if err != nil {
 		a.fail500(w, "list links", err)
 		return
@@ -321,12 +324,13 @@ func (a *App) listLinks(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, out)
 }
 
+// createLink is idempotent: the browser sends a key (cid) with each attempt, so a retry or double tap returns the same link.
 func (a *App) createLink(w http.ResponseWriter, r *http.Request) {
 	id, ok := a.owner(w, r)
 	if !ok {
 		return
 	}
-	var in struct{ Label string }
+	var in struct{ Label, Cid string }
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -335,8 +339,18 @@ func (a *App) createLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Give the link a short name")
 		return
 	}
+	cid := ""
+	if hexID.MatchString(in.Cid) {
+		cid = in.Cid
+	}
+	ctx := r.Context()
+	var slug string
+	if cid != "" && a.db.QueryRow(ctx, `SELECT slug FROM links WHERE owner_id=$1 AND idem=$2`, id, cid).Scan(&slug) == nil {
+		jsonOut(w, 200, map[string]any{"slug": slug})
+		return
+	}
 	var n int
-	if err := a.db.QueryRow(r.Context(), `SELECT count(*) FROM links WHERE owner_id=$1`, id).Scan(&n); err != nil {
+	if err := a.db.QueryRow(ctx, `SELECT count(*) FROM links WHERE owner_id=$1`, id).Scan(&n); err != nil {
 		a.fail500(w, "count links", err)
 		return
 	}
@@ -344,8 +358,11 @@ func (a *App) createLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, 403, "You've reached the link limit")
 		return
 	}
-	slug := randSlug(8)
-	if _, err := a.db.Exec(r.Context(), `INSERT INTO links(owner_id,slug,label) VALUES($1,$2,$3)`, id, slug, l); err != nil {
+	err := a.db.QueryRow(ctx, `INSERT INTO links(owner_id,slug,label,idem) VALUES($1,$2,$3,NULLIF($4,'')) ON CONFLICT (owner_id, idem) WHERE idem IS NOT NULL DO NOTHING RETURNING slug`, id, randSlug(8), l, cid).Scan(&slug)
+	if errors.Is(err, pgx.ErrNoRows) { // a parallel duplicate won the race
+		err = a.db.QueryRow(ctx, `SELECT slug FROM links WHERE owner_id=$1 AND idem=$2`, id, cid).Scan(&slug)
+	}
+	if err != nil {
 		a.fail500(w, "create link", err)
 		return
 	}
@@ -364,6 +381,7 @@ func (a *App) linkAct(sql string) http.HandlerFunc {
 			return
 		}
 		a.exec(r.Context(), "link action", sql, id, oid) // the owner_id condition in every statement is the ownership check
+		a.cache.delPrefix("info:")
 		jsonOut(w, 200, map[string]any{"ok": true})
 	}
 }
@@ -377,7 +395,7 @@ func (a *App) ownerAct(to string) http.HandlerFunc {
 		ctx := r.Context()
 		a.exec(ctx, "thread status", `UPDATE threads SET status=$2::text WHERE id=$1 AND ($2::text='blocked' OR status='pending')`, tid, to)
 		if to == "blocked" {
-			a.exec(ctx, "block visitor", `INSERT INTO blocks(owner_id, vid_hash) SELECT l.owner_id, t.vid_hash FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1 AND t.vid_hash<>'' ON CONFLICT DO NOTHING`, tid)
+			a.exec(ctx, "block guest", `INSERT INTO blocks(owner_id, vid_hash) SELECT l.owner_id, t.vid_hash FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1 AND t.vid_hash<>'' ON CONFLICT DO NOTHING`, tid)
 		}
 		a.hub.pub(tid, map[string]any{"t": "status", "v": to})
 		jsonOut(w, 200, map[string]any{"ok": true})
@@ -450,11 +468,17 @@ func (a *App) threadRoutes(mux *http.ServeMux, prefix string, res resolver) {
 
 // ---------- guests ----------
 
+// info is public and hit by every guest who opens a link, so it is cached for a few seconds.
 func (a *App) info(w http.ResponseWriter, r *http.Request) {
+	slug := r.PathValue("slug")
+	if v, hit := a.cache.get("info:" + slug); hit {
+		jsonCached(w, v, 10)
+		return
+	}
 	var id int64
-	var label, welcome, about string
+	var label, welcome, about, pub string
 	var ttl int
-	if err := a.db.QueryRow(r.Context(), activeLink, r.PathValue("slug")).Scan(&id, &label, &welcome, &about, &ttl); err != nil {
+	if err := a.db.QueryRow(r.Context(), activeLink, slug).Scan(&id, &label, &welcome, &about, &ttl, &pub); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "This link isn't active")
 		} else {
@@ -462,36 +486,65 @@ func (a *App) info(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
-	jsonOut(w, 200, map[string]any{"label": label, "welcome": welcome, "about": about, "ttl_hours": ttl})
+	out := map[string]any{"label": label, "welcome": welcome, "about": about, "ttl_hours": ttl, "pub": pub}
+	a.cache.set("info:"+slug, out, 10*time.Second)
+	jsonCached(w, out, 10)
 }
 
+// start creates a chat. It is idempotent: the browser makes the guest token itself, so a retry of the same request
+// (lost response, double tap, page reload) finds the chat it already made instead of creating a second one.
 func (a *App) start(w http.ResponseWriter, r *http.Request) {
 	slug := r.PathValue("slug")
-	if !a.rl.allow("start:"+clientIP(r), 10, time.Hour) {
+	if !a.rl.allow("start:"+clientIP(r), 20, time.Hour) {
 		fail(w, 429, "Too many new chats. Try again later")
 		return
 	}
-	var in struct{ Message, Turnstile string }
+	var in struct{ Message, Turnstile, Token, Pub string }
 	if !readJSON(w, r, &in) {
-		return
-	}
-	m := clean(in.Message)
-	mx := a.set.num("max_msg_len")
-	if m == "" || utf8.RuneCountInString(m) > mx {
-		fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
 		return
 	}
 	ctx := r.Context()
 	var lid int64
-	var label, welcome, about string
+	var label, welcome, about, lkey string
 	var ttl int
-	if err := a.db.QueryRow(ctx, activeLink, slug).Scan(&lid, &label, &welcome, &about, &ttl); err != nil {
+	if err := a.db.QueryRow(ctx, activeLink, slug).Scan(&lid, &label, &welcome, &about, &ttl, &lkey); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "This link isn't active")
 		} else {
 			a.fail500(w, "start lookup", err)
 		}
 		return
+	}
+	tok := in.Token
+	if !hex32.MatchString(tok) {
+		tok = randHex(16)
+	}
+	th := sha256hex(tok)
+	var have int
+	if a.db.QueryRow(ctx, `SELECT 1 FROM threads WHERE link_id=$1 AND token_hash=$2 AND expires_at>now()`, lid, th).Scan(&have) == nil {
+		a.setCookie(w, "v_"+slug, tok, 7*86400, false) // same request again: the chat already exists
+		jsonOut(w, 200, map[string]any{"ok": true})
+		return
+	}
+	secure := lkey != ""
+	m, pubv := in.Message, ""
+	mx := a.set.num("max_msg_len")
+	if secure {
+		if !validPub(in.Pub) || !e2eBody.MatchString(m) || len(m) > mx*6+128 {
+			fail(w, 400, "Please refresh the page and try again.")
+			return
+		}
+		pubv = in.Pub
+	} else {
+		m = clean(m)
+		if m == "" || utf8.RuneCountInString(m) > mx {
+			fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
+			return
+		}
+		if a.banned(m) {
+			fail(w, 400, "That message isn't allowed here")
+			return
+		}
 	}
 	vid := a.vidHash(w, r)
 	var bl int
@@ -503,30 +556,41 @@ func (a *App) start(w http.ResponseWriter, r *http.Request) {
 		fail(w, 400, "Please complete the human check and try again")
 		return
 	}
-	if a.banned(m) {
-		fail(w, 400, "That message isn't allowed here")
-		return
-	}
-	if c, err := r.Cookie("v_" + slug); err == nil {
+	if c, err := r.Cookie("v_" + slug); err == nil && c.Value != tok {
 		var n int
 		if a.db.QueryRow(ctx, `SELECT 1 FROM threads WHERE link_id=$1 AND token_hash=$2 AND expires_at>now()`, lid, sha256hex(c.Value)).Scan(&n) == nil {
 			fail(w, 409, "You already have a chat on this link")
 			return
 		}
 	}
-	tok := randHex(16)
 	// Fresh temporary names for both people, and a hard end time taken from the link's lifetime (never more than 7 days).
 	al, oal := randAlias(), randAlias()
 	for oal == al {
 		oal = randAlias()
 	}
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		a.fail500(w, "start begin", err)
+		return
+	}
+	defer tx.Rollback(ctx)
 	var tid int64
-	if err := a.db.QueryRow(ctx, `INSERT INTO threads(link_id,token_hash,alias,owner_alias,vid_hash,expires_at) SELECT $1,$2,$3,$4,$5, now()+make_interval(hours => LEAST(ttl_hours,168)) FROM links WHERE id=$1 RETURNING id`, lid, sha256hex(tok), al, oal, vid).Scan(&tid); err != nil {
+	err = tx.QueryRow(ctx, `INSERT INTO threads(link_id,token_hash,alias,owner_alias,vid_hash,expires_at,e2e,pub_v) SELECT $1,$2,$3,$4,$5, now()+make_interval(hours => LEAST(ttl_hours,168)), $6, $7 FROM links WHERE id=$1 ON CONFLICT (link_id, token_hash) DO NOTHING RETURNING id`, lid, th, al, oal, vid, secure, pubv).Scan(&tid)
+	if errors.Is(err, pgx.ErrNoRows) { // a parallel copy of this request created it first
+		a.setCookie(w, "v_"+slug, tok, 7*86400, false)
+		jsonOut(w, 200, map[string]any{"ok": true})
+		return
+	}
+	if err != nil {
 		a.fail500(w, "start thread", err)
 		return
 	}
-	if !a.exec(ctx, "start message", `INSERT INTO messages(thread_id,side,body) VALUES($1,'v',$2)`, tid, m) {
-		fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
+	if _, err = tx.Exec(ctx, `INSERT INTO messages(thread_id,side,body) VALUES($1,'v',$2)`, tid, m); err != nil {
+		a.fail500(w, "start message", err)
+		return
+	}
+	if err = tx.Commit(ctx); err != nil {
+		a.fail500(w, "start commit", err)
 		return
 	}
 	a.setCookie(w, "v_"+slug, tok, 7*86400, false)
@@ -552,14 +616,17 @@ func (a *App) presence(tid int64, side string) {
 	a.hub.pub(tid, map[string]any{"t": "presence", "side": side, "on": a.hub.conns(tid, side) > 0 && !a.isPriv(ctx, tid, side)})
 }
 
+// state returns everything a chat screen needs in two queries: the thread with its link, and the recent messages.
 func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side string) {
 	ctx := r.Context()
-	var alias, oalias, status, label, oc, vc string
-	var oa, va, po, pv bool
+	var alias, oalias, status, label, slug, lpub, pubv, oc, vc, areply string
+	var lid int64
+	var e2eOn, oa, va, po, pv bool
 	var rev *time.Time
 	var exp time.Time
 	var acct *int64
-	err := a.db.QueryRow(ctx, `SELECT t.alias,t.owner_alias,t.status,l.label,t.owner_agreed,t.visitor_agreed,t.owner_contact,t.visitor_contact,t.revealed_at,t.priv_o,t.priv_v,t.expires_at,t.account_id FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1`, tid).Scan(&alias, &oalias, &status, &label, &oa, &va, &oc, &vc, &rev, &po, &pv, &exp, &acct)
+	var qs, qe, tz int
+	err := a.db.QueryRow(ctx, `SELECT t.alias,t.owner_alias,t.status,l.label,l.slug,l.id,l.pubkey,t.e2e,t.pub_v,t.owner_agreed,t.visitor_agreed,t.owner_contact,t.visitor_contact,t.revealed_at,t.priv_o,t.priv_v,t.expires_at,t.account_id,l.autoreply,l.quiet_start,l.quiet_end,l.tz FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1`, tid).Scan(&alias, &oalias, &status, &label, &slug, &lid, &lpub, &e2eOn, &pubv, &oa, &va, &oc, &vc, &rev, &po, &pv, &exp, &acct, &areply, &qs, &qe, &tz)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "Not found")
@@ -587,17 +654,17 @@ func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side stri
 	if !done || time.Since(*rev) > 24*time.Hour {
 		contact = "" // the other person's details are only ever sent after both agreed, and only for 24 hours
 	}
-	out := map[string]any{"peer": peer, "label": label, "status": status, "side": side, "messages": msgs, "expires_at": exp,
-		"privacy": mine, "online": a.hub.conns(tid, other) > 0 && !theirs, "saved": acct != nil,
+	out := map[string]any{"peer": peer, "label": label, "slug": slug, "link_id": lid, "status": status, "side": side, "messages": msgs, "expires_at": exp,
+		"e2e": e2eOn, "gpub": pubv, "lpub": lpub, "privacy": mine, "online": a.hub.conns(tid, other) > 0 && !theirs, "saved": acct != nil,
 		"reveal": map[string]any{"you": you, "they": they, "done": done, "contact": contact}}
 	if side == "v" {
-		if slug := r.PathValue("slug"); slug != "" {
-			if c, err := r.Cookie("v_" + slug); err == nil {
-				out["resume"] = "/r/" + slug + "/" + c.Value
+		if s := r.PathValue("slug"); s != "" {
+			if c, err := r.Cookie("v_" + s); err == nil {
+				out["resume"] = "/r/" + s + "/" + c.Value
 			}
 		}
-		if status == "pending" {
-			out["auto"] = a.autoReply(ctx, tid)
+		if status == "pending" && areply != "" && inQuiet(qs, qe, tz) {
+			out["auto"] = areply
 		}
 	}
 	jsonOut(w, 200, out)
@@ -639,19 +706,11 @@ func (a *App) stream(w http.ResponseWriter, r *http.Request, tid int64, side str
 	}
 }
 
+// send is idempotent: the browser attaches a key (cid) to each message, and the database refuses a second
+// message with the same key in the same chat, so a retried request never posts twice.
 func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side string) {
-	var in struct{ Body string }
+	var in struct{ Body, Cid string }
 	if !readJSON(w, r, &in) {
-		return
-	}
-	b := clean(in.Body)
-	mx := a.set.num("max_msg_len")
-	if b == "" || utf8.RuneCountInString(b) > mx {
-		fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
-		return
-	}
-	if a.banned(b) {
-		fail(w, 400, "That message isn't allowed here")
 		return
 	}
 	if !a.rl.allow("m:"+strconv.FormatInt(tid, 10)+side, a.set.num("msgs_per_min"), time.Minute) {
@@ -660,7 +719,8 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 	}
 	ctx := r.Context()
 	var status string
-	if err := a.db.QueryRow(ctx, `SELECT status FROM threads WHERE id=$1`, tid).Scan(&status); err != nil {
+	var secure bool
+	if err := a.db.QueryRow(ctx, `SELECT status, e2e FROM threads WHERE id=$1`, tid).Scan(&status, &secure); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "Not found")
 		} else {
@@ -672,14 +732,40 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 		fail(w, 403, "This chat isn't open")
 		return
 	}
+	b, mx := in.Body, a.set.num("max_msg_len")
+	if secure {
+		if !e2eBody.MatchString(b) || len(b) > mx*6+128 {
+			fail(w, 400, "That message couldn't be sent. Refresh and try again.")
+			return
+		}
+	} else {
+		b = clean(b)
+		if b == "" || utf8.RuneCountInString(b) > mx {
+			fail(w, 400, fmt.Sprintf("Messages must be 1-%d characters", mx))
+			return
+		}
+		if a.banned(b) {
+			fail(w, 400, "That message isn't allowed here")
+			return
+		}
+	}
+	cid := ""
+	if hexID.MatchString(in.Cid) {
+		cid = in.Cid
+	}
 	var id int64
 	var ts time.Time
-	if err := a.db.QueryRow(ctx, `INSERT INTO messages(thread_id,side,body) VALUES($1,$2,$3) RETURNING id, created_at`, tid, side, b).Scan(&id, &ts); err != nil {
+	err := a.db.QueryRow(ctx, `INSERT INTO messages(thread_id,side,body,cid) VALUES($1,$2,$3,NULLIF($4,'')) ON CONFLICT (thread_id, cid) WHERE cid IS NOT NULL DO NOTHING RETURNING id, created_at`, tid, side, b, cid).Scan(&id, &ts)
+	if errors.Is(err, pgx.ErrNoRows) { // the same message was already stored
+		jsonOut(w, 200, map[string]any{"ok": true})
+		return
+	}
+	if err != nil {
 		a.fail500(w, "send", err)
 		return
 	}
 	a.exec(ctx, "touch thread", `UPDATE threads SET last_at=now() WHERE id=$1`, tid)
-	a.hub.pub(tid, map[string]any{"t": "msg", "id": id, "side": side, "body": b, "ts": ts})
+	a.hub.pub(tid, map[string]any{"t": "msg", "id": id, "side": side, "body": b, "ts": ts, "cid": cid})
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
@@ -726,6 +812,9 @@ func (a *App) setRetention(w http.ResponseWriter, r *http.Request, tid int64, si
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
+// reveal records this side's choice in ONE statement, so two people agreeing at the same moment can't miss each other,
+// and repeating the request changes nothing once the reveal has happened. Contact details of encrypted chats arrive
+// already encrypted, so the server only stores and returns ciphertext.
 func (a *App) reveal(w http.ResponseWriter, r *http.Request, tid int64, side string) {
 	var in struct {
 		Agree   bool
@@ -735,9 +824,8 @@ func (a *App) reveal(w http.ResponseWriter, r *http.Request, tid int64, side str
 		return
 	}
 	ctx := r.Context()
-	var status string
-	var rev *time.Time
-	if err := a.db.QueryRow(ctx, `SELECT status, revealed_at FROM threads WHERE id=$1`, tid).Scan(&status, &rev); err != nil {
+	var secure bool
+	if err := a.db.QueryRow(ctx, `SELECT e2e FROM threads WHERE id=$1`, tid).Scan(&secure); err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "Not found")
 		} else {
@@ -745,41 +833,48 @@ func (a *App) reveal(w http.ResponseWriter, r *http.Request, tid int64, side str
 		}
 		return
 	}
-	if status != "open" || rev != nil {
-		fail(w, 409, "Reveal isn't available right now")
-		return
-	}
-	// Column names come from these two constants only, never from the request.
-	col, ccol := "owner_agreed", "owner_contact"
+	// Column names come from these constants only, never from the request.
+	col, ccol, other := "owner_agreed", "owner_contact", "visitor_agreed"
 	if side == "v" {
-		col, ccol = "visitor_agreed", "visitor_contact"
+		col, ccol, other = "visitor_agreed", "visitor_contact", "owner_agreed"
 	}
+	var ct pgconn.CommandTag
+	var err error
 	if in.Agree {
-		c := clip(in.Contact, 100)
-		if c == "" {
+		c := in.Contact
+		if secure {
+			if !e2eBody.MatchString(c) || len(c) > 600 {
+				fail(w, 400, "That contact couldn't be sent. Refresh and try again.")
+				return
+			}
+		} else if c = clip(c, 100); c == "" {
 			fail(w, 400, "Enter what you want to share (max 100 characters)")
 			return
 		}
-		ok := a.exec(ctx, "reveal agree", `UPDATE threads SET `+col+`=true, `+ccol+`=$2 WHERE id=$1`, tid, c)
-		ok = ok && a.exec(ctx, "reveal complete", `UPDATE threads SET revealed_at=now() WHERE id=$1 AND owner_agreed AND visitor_agreed`, tid)
-		if !ok {
-			fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
-			return
-		}
-	} else if !a.exec(ctx, "reveal withdraw", `UPDATE threads SET `+col+`=false, `+ccol+`='' WHERE id=$1`, tid) {
-		fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
+		ct, err = a.db.Exec(ctx, `UPDATE threads SET `+col+`=CASE WHEN revealed_at IS NULL THEN true ELSE `+col+` END, `+ccol+`=CASE WHEN revealed_at IS NULL THEN $2 ELSE `+ccol+` END, revealed_at=CASE WHEN revealed_at IS NULL AND `+other+` THEN now() ELSE revealed_at END WHERE id=$1 AND status='open'`, tid, c)
+	} else {
+		ct, err = a.db.Exec(ctx, `UPDATE threads SET `+col+`=false, `+ccol+`='' WHERE id=$1 AND status='open' AND revealed_at IS NULL`, tid)
+	}
+	if err != nil {
+		a.fail500(w, "reveal", err)
+		return
+	}
+	if ct.RowsAffected() == 0 && in.Agree {
+		fail(w, 409, "Reveal isn't available right now")
 		return
 	}
 	a.hub.pub(tid, map[string]any{"t": "reveal"})
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
+// report is idempotent too (the browser sends a key per report). For end-to-end encrypted chats the reporter's
+// browser can attach the recent messages as evidence, because moderators can't read the chat themselves.
 func (a *App) report(w http.ResponseWriter, r *http.Request, tid int64, side string) {
-	if !a.rl.allow("rep:"+clientIP(r), 5, time.Hour) {
+	if !a.rl.allow("rep:"+clientIP(r), 10, time.Hour) {
 		fail(w, 429, "Too many reports. Try again later")
 		return
 	}
-	var in struct{ Code, Note string }
+	var in struct{ Code, Note, Evidence, Cid string }
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -791,7 +886,11 @@ func (a *App) report(w http.ResponseWriter, r *http.Request, tid int64, side str
 	if n := clip(in.Note, 300); n != "" {
 		reason += ": " + n
 	}
-	if !a.exec(r.Context(), "report", `INSERT INTO reports(thread_id,side,reason) VALUES($1,$2,$3)`, tid, side, reason) {
+	cid := ""
+	if hexID.MatchString(in.Cid) {
+		cid = in.Cid
+	}
+	if !a.exec(r.Context(), "report", `INSERT INTO reports(thread_id,side,reason,evidence,cid) VALUES($1,$2,$3,$4,NULLIF($5,'')) ON CONFLICT (thread_id, cid) WHERE cid IS NOT NULL DO NOTHING`, tid, side, reason, clip(in.Evidence, 4000), cid) {
 		fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
 		return
 	}

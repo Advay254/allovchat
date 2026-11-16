@@ -24,6 +24,7 @@ var staticFS embed.FS
 type Config struct {
 	DatabaseURL, AdminUser, AdminPass, AdminPath, BaseURL, Port, Secret string
 	Secure                                                               bool
+	DBMaxConns                                                           int
 }
 
 type App struct {
@@ -33,6 +34,7 @@ type App struct {
 	set   *Settings
 	rl    *Limiter
 	fails *FailLimiter
+	cache *Cache
 }
 
 // Paths the app already uses, which an admin slug must not collide with.
@@ -49,6 +51,7 @@ func loadConfig() Config {
 		BaseURL:     strings.TrimRight(os.Getenv("BASE_URL"), "/"),
 		Port:        os.Getenv("PORT"),
 		Secret:      os.Getenv("SESSION_SECRET"),
+		DBMaxConns:  6,
 	}
 	if c.Port == "" {
 		c.Port = "8080"
@@ -72,6 +75,11 @@ func loadConfig() Config {
 			proxyHops = n
 		}
 	}
+	if v := os.Getenv("DB_MAX_CONNS"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n >= 1 && n <= 20 {
+			c.DBMaxConns = n
+		}
+	}
 	c.Secure = strings.HasPrefix(c.BaseURL, "https://")
 	return c
 }
@@ -80,7 +88,17 @@ func main() {
 	cfg := loadConfig()
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	db, err := pgxpool.New(ctx, cfg.DatabaseURL)
+	// A small pool keeps the database's memory use low. Small hosted databases run out of memory with many connections.
+	pcfg, err := pgxpool.ParseConfig(cfg.DatabaseURL)
+	if err != nil {
+		log.Fatalf("database config: %v", err)
+	}
+	pcfg.MaxConns = int32(cfg.DBMaxConns)
+	pcfg.MinConns = 0
+	pcfg.MaxConnLifetime = 30 * time.Minute
+	pcfg.MaxConnIdleTime = 5 * time.Minute
+	pcfg.HealthCheckPeriod = time.Minute
+	db, err := pgxpool.NewWithConfig(ctx, pcfg)
 	if err != nil {
 		log.Fatalf("database config: %v", err)
 	}
@@ -90,7 +108,7 @@ func main() {
 		log.Fatalf("cannot reach database: %v", err)
 	}
 	cancel()
-	a := &App{cfg: cfg, db: db, hub: newHub(), set: &Settings{m: map[string]string{}}, rl: newLimiter(), fails: newFails()}
+	a := &App{cfg: cfg, db: db, hub: newHub(), set: &Settings{m: map[string]string{}}, rl: newLimiter(), fails: newFails(), cache: newCache()}
 	if err := a.migrate(ctx); err != nil {
 		log.Fatalf("migration failed: %v", err)
 	}
@@ -103,10 +121,18 @@ func main() {
 		defer c()
 		srv.Shutdown(sc)
 	}()
-	log.Printf("allovchat listening on :%s (admin dashboard enabled)", cfg.Port)
+	log.Printf("allovchat listening on :%s (admin dashboard enabled, %d database connections)", cfg.Port, cfg.DBMaxConns)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+func cacheFor(h http.Handler, secs int) http.Handler {
+	v := "public, max-age=" + strconv.Itoa(secs)
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", v)
+		h.ServeHTTP(w, r)
+	})
 }
 
 func (a *App) routes() http.Handler {
@@ -114,7 +140,7 @@ func (a *App) routes() http.Handler {
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /app", a.page("app.html"))
 	mux.HandleFunc("GET /l/{slug}", a.page("chat.html"))
-	mux.Handle("GET /static/", http.FileServerFS(staticFS))
+	mux.Handle("GET /static/", cacheFor(http.FileServerFS(staticFS), 300))
 	a.siteRoutes(mux)
 	a.apiRoutes(mux)
 	ap := "/" + a.cfg.AdminPath

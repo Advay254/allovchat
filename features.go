@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"crypto/ecdh"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -16,8 +19,28 @@ import (
 	qrcode "github.com/skip2/go-qrcode"
 )
 
+var (
+	// e2eBody matches an encrypted message or contact: "e1." + 12 byte IV + ciphertext, all base64url.
+	e2eBody = regexp.MustCompile(`^e1\.[A-Za-z0-9_-]{16}\.[A-Za-z0-9_-]{22,}$`)
+	// hexID matches ids and tokens that the browser generates (idempotency keys, guest tokens).
+	hexID  = regexp.MustCompile(`^[a-f0-9]{16,64}$`)
+	hex32  = regexp.MustCompile(`^[a-f0-9]{32}$`)
+)
+
+// validPub checks that s is a real uncompressed P-256 public key, so nobody can store junk as an encryption key.
+func validPub(s string) bool {
+	b, err := base64.RawURLEncoding.DecodeString(s)
+	if err != nil || len(b) != 65 {
+		return false
+	}
+	_, err = ecdh.P256().NewPublicKey(b)
+	return err == nil
+}
+
 func (a *App) featureRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/links/{id}/edit", a.editLink)
+	mux.HandleFunc("POST /api/links/{id}/active", a.setLinkActive)
+	mux.HandleFunc("POST /api/links/{id}/key", a.setLinkKey)
 	mux.HandleFunc("GET /api/links/{id}/qr.png", a.linkQR)
 	mux.HandleFunc("GET /api/blocks", a.blockCount)
 	mux.HandleFunc("POST /api/blocks/clear", a.blockClear)
@@ -26,6 +49,12 @@ func (a *App) featureRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.stats)
 	mux.HandleFunc("POST /api/l/{slug}/claim", a.claimChat)
 	mux.HandleFunc("POST /api/m/{id}/unclaim", a.unclaimChat)
+}
+
+func jsonCached(w http.ResponseWriter, v any, secs int) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Cache-Control", "public, max-age="+strconv.Itoa(secs))
+	json.NewEncoder(w).Encode(v)
 }
 
 // clean removes invalid UTF-8, null bytes, control characters and text-direction overrides from user input.
@@ -51,7 +80,7 @@ func clip(s string, n int) string {
 	return s
 }
 
-// vidHash returns the hash of the visitor's long-lived device cookie, creating it if needed.
+// vidHash returns the hash of the guest's long-lived device cookie, creating it if needed.
 func (a *App) vidHash(w http.ResponseWriter, r *http.Request) string {
 	if c, err := r.Cookie("vid"); err == nil && len(c.Value) == 32 {
 		return sha256hex(c.Value)
@@ -61,6 +90,7 @@ func (a *App) vidHash(w http.ResponseWriter, r *http.Request) string {
 	return sha256hex(v)
 }
 
+// banned only applies to plain-text chats. End-to-end encrypted messages can't be read by the server, by design.
 func (a *App) banned(s string) bool {
 	s = strings.ToLower(s)
 	split := func(r rune) bool { return r == ',' || r == '\n' }
@@ -112,19 +142,6 @@ func inQuiet(start, end, tz int) bool {
 	return h >= start || h < end
 }
 
-// autoReply returns the link's auto-reply text when it applies right now.
-func (a *App) autoReply(ctx context.Context, tid int64) string {
-	var t string
-	var qs, qe, tz int
-	if a.db.QueryRow(ctx, `SELECT l.autoreply,l.quiet_start,l.quiet_end,l.tz FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1`, tid).Scan(&t, &qs, &qe, &tz) != nil || t == "" {
-		return ""
-	}
-	if inQuiet(qs, qe, tz) {
-		return t
-	}
-	return ""
-}
-
 func (a *App) editLink(w http.ResponseWriter, r *http.Request) {
 	oid, ok := a.owner(w, r)
 	if !ok {
@@ -158,6 +175,61 @@ func (a *App) editLink(w http.ResponseWriter, r *http.Request) {
 		fail(w, 500, "Something went wrong on our side. Please try again in a moment.")
 		return
 	}
+	a.cache.delPrefix("info:")
+	jsonOut(w, 200, map[string]any{"ok": true})
+}
+
+// setLinkActive sets a link live or paused. It sets an exact state, so repeating the request changes nothing.
+func (a *App) setLinkActive(w http.ResponseWriter, r *http.Request) {
+	oid, ok := a.owner(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 404, "Not found")
+		return
+	}
+	var in struct{ On bool }
+	if !readJSON(w, r, &in) {
+		return
+	}
+	a.exec(r.Context(), "link active", `UPDATE links SET active=$3 WHERE id=$1 AND owner_id=$2`, id, oid, in.On)
+	a.cache.delPrefix("info:")
+	jsonOut(w, 200, map[string]any{"ok": true})
+}
+
+// setLinkKey publishes the link's public encryption key. The private half never leaves the owner's browser.
+// Publishing the same key again succeeds; a different key is refused so a link's key can't be swapped under guests.
+func (a *App) setLinkKey(w http.ResponseWriter, r *http.Request) {
+	oid, ok := a.owner(w, r)
+	if !ok {
+		return
+	}
+	id, err := strconv.ParseInt(r.PathValue("id"), 10, 64)
+	if err != nil {
+		fail(w, 404, "Not found")
+		return
+	}
+	var in struct{ Pub string }
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if !validPub(in.Pub) {
+		fail(w, 400, "That isn't a valid encryption key")
+		return
+	}
+	var slug string
+	err = a.db.QueryRow(r.Context(), `UPDATE links SET pubkey=$3 WHERE id=$1 AND owner_id=$2 AND (pubkey='' OR pubkey=$3) RETURNING slug`, id, oid, in.Pub).Scan(&slug)
+	if errors.Is(err, pgx.ErrNoRows) {
+		fail(w, 409, "This link already has a different encryption key")
+		return
+	}
+	if err != nil {
+		a.fail500(w, "link key", err)
+		return
+	}
+	a.cache.delPrefix("info:")
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
@@ -213,13 +285,13 @@ func (a *App) blockClear(w http.ResponseWriter, r *http.Request) {
 // resume restores a guest's chat on a new device or after cookies were cleared.
 func (a *App) resume(w http.ResponseWriter, r *http.Request) {
 	slug, tok := r.PathValue("slug"), r.PathValue("token")
-	if a.rl.allow("res:"+clientIP(r), 30, time.Hour) && len(tok) == 32 {
+	if a.rl.allow("res:"+clientIP(r), 30, time.Hour) && hex32.MatchString(tok) {
 		var n int
 		if a.db.QueryRow(r.Context(), `SELECT 1 FROM threads t JOIN links l ON l.id=t.link_id WHERE l.slug=$1 AND t.token_hash=$2 AND t.expires_at>now()`, slug, sha256hex(tok)).Scan(&n) == nil {
 			a.setCookie(w, "v_"+slug, tok, 7*86400, false)
 		}
 	}
-	http.Redirect(w, r, "/l/"+url.PathEscape(slug), http.StatusSeeOther)
+	http.Redirect(w, r, "/l/"+url.PathEscape(slug), http.StatusSeeOther) // the browser keeps any #fragment, which is where the encryption key travels
 }
 
 // ---------- chats saved to an account ----------
@@ -247,7 +319,7 @@ func (a *App) accountThread(w http.ResponseWriter, r *http.Request) (int64, stri
 	return tid, "v", true
 }
 
-// claimChat attaches the caller's guest chat to their account. It is always the guest's own choice.
+// claimChat attaches the caller's guest chat to their account. It is always the guest's own choice, and repeating it is harmless.
 func (a *App) claimChat(w http.ResponseWriter, r *http.Request) {
 	tid, _, ok := a.visitorThread(w, r)
 	if !ok {
@@ -278,22 +350,27 @@ func (a *App) unclaimChat(w http.ResponseWriter, r *http.Request) {
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
-// listChats returns the chats on the caller's links plus the chats they joined and saved.
+// listChats returns the chats on the caller's links plus the chats they joined and saved, in one query.
+// The latest message and the unread count come from indexed lateral joins, not one query per chat.
 func (a *App) listChats(w http.ResponseWriter, r *http.Request) {
 	oid, ok := a.owner(w, r)
 	if !ok {
 		return
 	}
 	out, err := a.rowsOut(r.Context(), `SELECT * FROM (
-		SELECT t.id, 'owner' AS role, t.alias AS peer, l.label, t.status, t.last_at, t.expires_at,
-			COALESCE((SELECT body FROM messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1),'') AS preview,
-			(SELECT count(*) FROM messages m WHERE m.thread_id=t.id AND m.side='v' AND m.read_at IS NULL) AS unread
-		FROM threads t JOIN links l ON l.id=t.link_id WHERE l.owner_id=$1 AND t.status<>'blocked' AND t.expires_at>now()
+		SELECT t.id, 'owner' AS role, t.alias AS peer, l.label, l.slug, l.id AS link_id, t.status, t.last_at, t.expires_at, t.e2e, t.pub_v AS gpub, l.pubkey AS lpub,
+			COALESCE(lm.body,'') AS preview, COALESCE(lm.side,'') AS last_side, COALESCE(u.n,0) AS unread
+		FROM threads t JOIN links l ON l.id=t.link_id
+		LEFT JOIN LATERAL (SELECT m.body, m.side FROM messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1) lm ON true
+		LEFT JOIN LATERAL (SELECT count(*) AS n FROM messages m WHERE m.thread_id=t.id AND m.side='v' AND m.read_at IS NULL) u ON true
+		WHERE l.owner_id=$1 AND t.status<>'blocked' AND t.expires_at>now()
 		UNION ALL
-		SELECT t.id, 'guest' AS role, CASE WHEN t.owner_alias='' THEN l.label ELSE t.owner_alias END AS peer, l.label, t.status, t.last_at, t.expires_at,
-			COALESCE((SELECT body FROM messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1),'') AS preview,
-			(SELECT count(*) FROM messages m WHERE m.thread_id=t.id AND m.side='o' AND m.read_at IS NULL) AS unread
-		FROM threads t JOIN links l ON l.id=t.link_id WHERE t.account_id=$1 AND t.expires_at>now()
+		SELECT t.id, 'guest' AS role, CASE WHEN t.owner_alias='' THEN l.label ELSE t.owner_alias END AS peer, l.label, l.slug, l.id AS link_id, t.status, t.last_at, t.expires_at, t.e2e, t.pub_v AS gpub, l.pubkey AS lpub,
+			COALESCE(lm.body,'') AS preview, COALESCE(lm.side,'') AS last_side, COALESCE(u.n,0) AS unread
+		FROM threads t JOIN links l ON l.id=t.link_id
+		LEFT JOIN LATERAL (SELECT m.body, m.side FROM messages m WHERE m.thread_id=t.id ORDER BY m.id DESC LIMIT 1) lm ON true
+		LEFT JOIN LATERAL (SELECT count(*) AS n FROM messages m WHERE m.thread_id=t.id AND m.side='o' AND m.read_at IS NULL) u ON true
+		WHERE t.account_id=$1 AND t.expires_at>now()
 	) c ORDER BY last_at DESC LIMIT 200`, oid)
 	if err != nil {
 		a.fail500(w, "list chats", err)
@@ -307,6 +384,11 @@ func (a *App) stats(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
+	key := "stats:" + strconv.FormatInt(oid, 10)
+	if v, hit := a.cache.get(key); hit {
+		jsonOut(w, 200, v)
+		return
+	}
 	var chats, links, shared, msgs int
 	err := a.db.QueryRow(r.Context(), `SELECT
 		(SELECT count(*) FROM threads t JOIN links l ON l.id=t.link_id WHERE l.owner_id=$1 AND t.status='open' AND t.expires_at>now()),
@@ -317,5 +399,7 @@ func (a *App) stats(w http.ResponseWriter, r *http.Request) {
 		a.fail500(w, "stats", err)
 		return
 	}
-	jsonOut(w, 200, map[string]any{"chats": chats, "links": links, "shared": shared, "messages": msgs})
+	out := map[string]any{"chats": chats, "links": links, "shared": shared, "messages": msgs}
+	a.cache.set(key, out, 10*time.Second)
+	jsonOut(w, 200, out)
 }
