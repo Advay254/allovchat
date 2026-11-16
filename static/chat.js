@@ -5,6 +5,7 @@
   const REASONS = [['spam', 'Spam or ads'], ['harassment', 'Harassment or abuse'], ['scam', 'Scam or asking for money'], ['explicit', 'Sexual or explicit content'], ['other', 'Something else']];
   const QUICK = 'https://www.wikipedia.org/'; // where the emergency exit sends a guest, so nothing about the chat stays on screen
   const left = (ms) => { const m = Math.floor(ms / 6e4), h = Math.floor(m / 60), d = Math.floor(h / 24); return d >= 2 ? d + ' days' : h >= 2 ? h + ' hours' : h >= 1 ? '1 hour' : Math.max(m, 1) + ' minutes'; };
+  const te = new TextEncoder();
 
   window.api = async (path, body) => {
     const r = await fetch(path, body === undefined ? {} : { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -19,8 +20,8 @@
     if (window._es) window._es.close();
     clearInterval(window._exp);
     root.textContent = '';
-    let st = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false;
-    const pend = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0;
+    let st = null, key = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false;
+    const pend = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0, other = side === 'o' ? 'v' : 'o';
 
     const head = $('div', 'chat-head');
     if (onBack) { const b = $('button', 'icon-btn back'); b.innerHTML = ico('back', 24); b.setAttribute('aria-label', 'Back'); b.onclick = onBack; head.append(b); }
@@ -31,14 +32,47 @@
     const moreBtn = $('button', 'icon-btn'); moreBtn.innerHTML = ico('more'); moreBtn.setAttribute('aria-label', 'More options'); moreBtn.setAttribute('aria-haspopup', 'menu');
     head.append(av, who, revealBtn, leaveBtn, moreBtn);
 
+    const note = $('div', 'e2e-note'); note.hidden = true;
     const expiry = $('div', 'expiry'), exIcon = $('span'), exTxt = $('span'); exIcon.innerHTML = ico('clock', 18); expiry.append(exIcon, exTxt); expiry.hidden = true; expiry.setAttribute('role', 'status');
     const msgs = $('div', 'msgs'), foot = $('div', 'chat-foot');
     msgs.setAttribute('role', 'log'); msgs.setAttribute('aria-live', 'polite'); msgs.setAttribute('aria-label', 'Messages');
     const typing = $('div', 'mrow them'), tb = $('div', 'm them typing'); tb.append($('i'), $('i'), $('i')); typing.append(tb); typing.hidden = true;
     const hint = $('div', 'hint'), hintBtn = $('button', 'linkbtn', 'Reveal now'); hint.hidden = true; hint.setAttribute('role', 'status');
     hint.append($('span', null, 'Looks like contact info. Want to reveal this properly?'), hintBtn);
-    root.append(head, expiry, msgs, foot);
+    root.append(head, note, expiry, msgs, foot);
     for (let i = 0; i < 3; i++) { const r = $('div', 'mrow ' + (i === 1 ? 'me' : 'them')), s = $('div', 'sk'); s.style.cssText = 'height:42px;border-radius:20px;width:' + (45 + i * 12) + '%'; r.append(s); msgs.append(r); }
+
+    // ---- encryption helpers ----
+    const setupKey = async () => {
+      key = null;
+      if (!st.e2e || !window.e2e.ok) return;
+      const mine = side === 'o' ? e2e.K.get('link:' + st.link_id) : e2e.K.get('g:' + st.slug), theirs = side === 'o' ? st.gpub : st.lpub;
+      if (!mine || !mine.priv || !theirs) return;
+      try { key = await e2e.shared(mine.priv, theirs); } catch (e) { key = null; }
+    };
+    const dec = async (body, s, ctx) => {
+      if (!st.e2e) return body;
+      if (!key) return '[Encrypted. The key isn\'t on this device]';
+      try { return await e2e.open(key, body, s, ctx); } catch (e) { return '[Couldn\'t decrypt this message]'; }
+    };
+    const renderNote = () => {
+      note.hidden = false; note.textContent = '';
+      const ic = $('span'), t = $('span', 'grow');
+      ic.innerHTML = ico(st.e2e && key ? 'lock' : 'shield', 16);
+      if (st.e2e && key) t.textContent = 'End-to-end encrypted. Only you and the other person can read this chat.';
+      else if (st.e2e) t.textContent = "This chat is encrypted, but its key isn't on this device. Open your return link on the device where you started it.";
+      else t.textContent = 'This chat started before end-to-end encryption, so the server can read it until it is deleted.';
+      note.append(ic, t);
+      if (st.e2e && key) { const b = $('button', 'linkbtn', 'Verify'); b.onclick = verifySheet; note.append(b); }
+    };
+    const verifySheet = async () => {
+      let code = '';
+      try { code = await e2e.safety(st.lpub, st.gpub); } catch (e) { toast("Couldn't work out the code"); return; }
+      sheet('Verify encryption', (box, close) => {
+        const b = $('button', 'btn wide', 'Done'); b.onclick = close;
+        box.append($('p', null, 'If this code matches on both screens, nobody is sitting in the middle of this chat.'), $('p', 'big', code), $('p', 'fine', 'Compare it somewhere other than this chat if you can, for example by voice. The code changes if either key changes.'), b);
+      });
+    };
 
     const bottom = (smooth) => msgs.scrollTo({ top: msgs.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
     const refresh = () => {
@@ -54,7 +88,7 @@
       row.dataset.id = m.id; row.dataset.side = m.side;
       if (animate) row.classList.add('new');
       if (m.pend) b.classList.add('pend');
-      b.append($('span', null, m.body), $('small', 'meta', hm(m.ts) + (mine ? (m.is_read ? ' \u00b7 Read' : m.pend ? ' \u00b7 Sending' : ' \u00b7 Sent') : '')));
+      b.append($('span', null, m.text), $('small', 'meta', hm(m.ts) + (mine ? (m.is_read ? ' \u00b7 Read' : m.pend ? ' \u00b7 Sending' : ' \u00b7 Sent') : '')));
       row.append(b);
       const prev = lastRow();
       if (prev && prev.dataset.side === m.side) { prev.firstChild.classList.remove('end'); row.classList.add('follow'); }
@@ -62,6 +96,8 @@
     };
     const add = (m, animate) => { typing.hidden = true; const row = bubble(m, animate); msgs.insertBefore(row, typing); bottom(animate); return row; };
     const act = async (path) => { try { await api(base + path, {}); load(); } catch (e) { toast(e.message); } };
+    // Many incoming messages in a row cause one "mark as read" request, not one each.
+    const markRead = debounce(() => api(base + '/state').catch(() => {}), 700);
 
     const composer = () => {
       const f = $('form', 'composer'), i = $('input'), b = $('button', 'icon-btn send');
@@ -77,9 +113,13 @@
         e.preventDefault();
         const v = i.value.trim(); if (!v) return;
         i.value = ''; b.disabled = true; hint.hidden = true; haptic('select');
-        const row = add({ id: 't' + Date.now(), side, body: v, ts: new Date().toISOString(), pend: true }, true), p = { row, body: v };
+        // The message gets its own key (cid) before it is sent. If the request is retried, the server stores it only once.
+        const cid = e2e.rand(16);
+        let ct = v;
+        try { if (st.e2e) ct = await e2e.seal(key, v, side); } catch (er) { i.value = v; toast("Couldn't encrypt that message"); return; }
+        const row = add({ id: 't' + cid, side, body: ct, text: v, ts: new Date().toISOString(), pend: true }, true), p = { row, cid };
         pend.push(p);
-        try { await api(base + '/send', { body: v }); }
+        try { await api(base + '/send', { body: ct, cid }); }
         catch (er) { row.remove(); pend.splice(pend.indexOf(p), 1); i.value = v; b.disabled = false; shake(f); toast(er.message); }
       };
       f.append(i, b);
@@ -90,12 +130,13 @@
     const render = () => {
       title.textContent = st.peer; online = !!st.online;
       const na = avatar(st.peer); head.replaceChild(na, av); av = na;
+      renderNote();
       msgs.textContent = ''; msgs.append(typing); typing.hidden = true; pend.length = 0;
       st.messages.forEach((m) => msgs.insertBefore(bubble(m, false), typing)); bottom(false);
       revealBtn.hidden = st.status !== 'open';
       revealBtn.lastChild.textContent = st.reveal.done ? 'Contact' : 'Reveal';
       foot.textContent = ''; hint.hidden = true;
-      if (st.status === 'open') foot.append(hint, composer());
+      if (st.status === 'open') foot.append(hint, st.e2e && !key ? $('p', 'fine center', "You can't send or read messages here without this chat's key.") : composer());
       else if (st.status === 'pending' && side === 'o') {
         const bar = $('div', 'bar-note'), a = $('button', 'btn sm', 'Accept'), bl = $('button', 'btn soft sm', 'Block'), r = $('div', 'row');
         a.onclick = () => act('/accept'); bl.onclick = blockSheet; r.append(bl, a);
@@ -115,15 +156,22 @@
       if (r.done) {
         if (r.contact) {
           const cp = $('button', 'btn wide', 'Copy');
-          cp.onclick = async () => { try { await navigator.clipboard.writeText(r.contact); cp.textContent = 'Copied'; haptic('success'); pulse(cp); } catch (e) { toast("Couldn't copy that"); } };
-          body.append($('p', 'fine', st.peer + ' shared:'), $('p', 'big mask-in', r.contact), cp, $('p', 'fine', 'This disappears 24 hours after the reveal.'));
+          cp.onclick = async () => { try { await navigator.clipboard.writeText(r.text); cp.textContent = 'Copied'; haptic('success'); pulse(cp); } catch (e) { toast("Couldn't copy that"); } };
+          body.append($('p', 'fine', st.peer + ' shared:'), $('p', 'big mask-in', r.text), cp, $('p', 'fine', 'This disappears 24 hours after the reveal.'));
         } else body.append($('p', null, 'The reveal window has expired.'));
         return;
       }
       const l = $('label', 'field', 'What will you share?'), i = $('input');
       i.maxLength = 100; i.placeholder = 'WhatsApp number or @handle'; l.append(i);
       const ok = $('button', 'btn wide', r.you ? 'Update contact' : 'Reveal contact');
-      ok.onclick = async () => { try { await api(base + '/reveal', { agree: true, contact: i.value }); haptic('success'); await load(); } catch (e) { shake(l); toast(e.message); } };
+      ok.onclick = async () => {
+        const v = i.value.trim();
+        if (!v) { shake(l); return; }
+        try {
+          const ct = st.e2e ? await e2e.seal(key, v, side, 'c') : v;
+          await api(base + '/reveal', { agree: true, contact: ct }); haptic('success'); await load();
+        } catch (e) { shake(l); toast(e.message || "Couldn't send that"); }
+      };
       body.append($('p', null, 'You both need to agree. Nothing is shared until ' + st.peer + ' agrees too.'),
         $('p', 'fine', 'You: ' + (r.you ? 'ready' : 'not yet') + ' \u00b7 ' + st.peer + ': ' + (r.they ? 'ready' : 'waiting')),
         l, $('p', 'warn', "We can't verify what anyone shares. Only reveal when you trust them."), ok);
@@ -131,6 +179,7 @@
     };
     const openReveal = () => {
       if (!st) return;
+      if (st.e2e && !key) { toast("This chat's key isn't on this device"); return; }
       sheet('Contact reveal', (box) => { const body = $('div', 'rv-body'); box.append(body); rev = { body }; fillReveal(); }, { onClose: () => { rev = null; } });
     };
     revealBtn.onclick = openReveal; hintBtn.onclick = openReveal;
@@ -139,7 +188,7 @@
     const leaveNow = async () => {
       haptic('warn');
       try { await api(base + '/leave', {}); } catch (e) {}
-      if (viaLink) { location.replace(QUICK); return; }
+      if (viaLink) { if (st) e2e.K.del('g:' + st.slug); location.replace(QUICK); return; }
       onGone && onGone();
     };
     leaveBtn.onclick = leaveNow;
@@ -161,37 +210,51 @@
     });
     const reportSheet = () => sheet('Report this chat', (box, close) => {
       let code = '';
-      const note = $('textarea'), err = $('p', 'err', 'Pick a reason first'), list = $('div', 'opts');
+      const cid = e2e.rand(16), note2 = $('textarea'), err = $('p', 'err', 'Pick a reason first'), list = $('div', 'opts'), ev = $('input');
       err.hidden = true; err.setAttribute('role', 'alert'); list.setAttribute('role', 'radiogroup'); list.setAttribute('aria-label', 'Reason');
       REASONS.forEach(([k, t]) => {
         const l = $('label', 'opt'), r = $('input'); r.type = 'radio'; r.name = 'reason'; r.value = k;
         r.onchange = () => { code = k; err.hidden = true; };
         l.append(r, $('span', null, t)); list.append(l);
       });
-      note.rows = 3; note.maxLength = 300; note.placeholder = 'Add details (optional)'; note.setAttribute('aria-label', 'Details');
+      note2.rows = 3; note2.maxLength = 300; note2.placeholder = 'Add details (optional)'; note2.setAttribute('aria-label', 'Details');
       const row = $('div', 'row'), ok = $('button', 'btn', 'Send report'), no = $('button', 'btn soft', 'Cancel');
+      let evBox = null;
+      if (st.e2e) { evBox = $('label', 'opt'); ev.type = 'checkbox'; ev.checked = true; evBox.append(ev, $('span', null, 'Attach the last 8 messages so moderators can see what happened')); }
       ok.onclick = async () => {
         if (!code) { err.hidden = false; shake(list); return; }
-        try { await api(base + '/report', { code, note: note.value }); haptic('success'); close(); toast('Thanks. Moderators will take a look.'); }
+        const evidence = st.e2e && ev.checked ? st.messages.slice(-8).map((m) => (m.side === side ? 'You' : 'Them') + ': ' + m.text).join('\n') : '';
+        try { await api(base + '/report', { code, note: note2.value, evidence, cid }); haptic('success'); close(); toast('Thanks. Moderators will take a look.'); }
         catch (e) { err.textContent = e.message; err.hidden = false; }
       };
       no.onclick = close; row.append(no, ok);
-      box.append($('p', 'fine', "Reports go to the platform's moderators. They only see this chat because you reported it."), list, note, err, row);
+      box.append($('p', 'fine', st.e2e ? "Reports go to the platform's moderators. This chat is end-to-end encrypted, so they can only see what you choose to attach." : "Reports go to the platform's moderators. They only see this chat because you reported it."), list, note2);
+      if (evBox) box.append(evBox);
+      box.append(err, row);
     });
     const blockSheet = () => confirmSheet('Block this guest?', "They won't be able to start new chats on any of your links.", 'Block', () => act('/block'));
     moreBtn.onclick = () => popover(moreBtn, (pop, close) => {
       menuItem(pop, close, 'flag', 'Report', reportSheet);
       menuItem(pop, close, 'eyeoff', 'Privacy mode', privacySheet);
       menuItem(pop, close, 'clock', 'Delete sooner', retentionSheet);
+      if (st && st.e2e && key) menuItem(pop, close, 'shield', 'Verify encryption', verifySheet);
       if (side === 'o' && st && st.status !== 'blocked') menuItem(pop, close, 'block', 'Block guest', blockSheet);
-      if (viaLink && st && st.resume) menuItem(pop, close, 'link', 'Copy return link', async () => { try { await navigator.clipboard.writeText(location.origin + st.resume); toast('Return link copied. Keep it private.'); } catch (e) { toast("Couldn't copy that"); } });
+      if (viaLink && st && st.resume) menuItem(pop, close, 'link', 'Copy return link', async () => {
+        const ent = e2e.K.get('g:' + st.slug), frag = ent ? '#k=' + e2e.b64(te.encode(JSON.stringify(ent))) : '';
+        try { await navigator.clipboard.writeText(location.origin + st.resume + frag); toast('Return link copied. It holds your key, so keep it private.'); } catch (e) { toast("Couldn't copy that"); }
+      });
       if (saved) menuItem(pop, close, 'user', 'Remove from my account', async () => { try { await api(base + '/unclaim', {}); onGone && onGone(); } catch (e) { toast(e.message); } });
     });
 
     const load = async () => {
       try {
         const was = st ? st.reveal.done : null;
-        st = await api(base + '/state'); render();
+        const s = await api(base + '/state');
+        const firstLoad = !st; st = s;
+        if (firstLoad || (st.e2e && !key)) await setupKey();
+        await Promise.all(st.messages.map(async (m) => { m.text = await dec(m.body, m.side); }));
+        st.reveal.text = st.reveal.contact ? await dec(st.reveal.contact, other, 'c') : '';
+        render();
         if (was === false && st.reveal.done) haptic('success');
         if (rev) fillReveal();
         if (!defDone) { defDone = true; if (localStorage.getItem('privacy') === '1' && !st.privacy) { api(base + '/privacy', { on: true }).then(() => { st.privacy = true; }).catch(() => {}); } }
@@ -201,16 +264,17 @@
 
     const es = new EventSource(base + '/stream'); window._es = es;
     es.onopen = load;
-    es.onmessage = (ev) => {
+    es.onmessage = async (ev) => {
       const d = JSON.parse(ev.data);
       if (d.t === 'msg') {
         if (d.side === side) {
-          const k = pend.findIndex((p) => p.body === d.body);
+          const k = d.cid ? pend.findIndex((p) => p.cid === d.cid) : -1;
           if (k > -1) { const p = pend.splice(k, 1)[0]; p.row.dataset.id = d.id; p.row.firstChild.classList.remove('pend'); p.row.querySelector('.meta').textContent = hm(d.ts) + ' \u00b7 Sent'; return; }
         }
-        if (!msgs.querySelector('[data-id="' + d.id + '"]')) add({ id: d.id, side: d.side, body: d.body, ts: d.ts }, true);
+        if (msgs.querySelector('[data-id="' + d.id + '"]')) return;
+        add({ id: d.id, side: d.side, body: d.body, text: await dec(d.body, d.side), ts: d.ts }, true);
         if (d.side !== side) {
-          haptic('select'); api(base + '/state').catch(() => {});
+          haptic('select'); markRead();
           if (document.hidden && window.Notification && Notification.permission === 'granted') new Notification('New message', { body: 'Open the chat to read it' });
         }
       } else if (d.t === 'typing' && d.side !== side) {

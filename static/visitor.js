@@ -1,22 +1,45 @@
 const $=id=>document.getElementById(id);
 const el=(t,c,x)=>{const e=document.createElement(t);if(c)e.className=c;if(x!=null)e.textContent=x;return e};
 const slug=location.pathname.split('/')[2];
-let token='',tsKey='',pub={};
+const td=new TextDecoder();
+let token='',tsKey='',pub={},info={},busy=false;
 const ttlWord=h=>h>=168?'7 days':h>=72?'3 days':h>=24?'24 hours':h+(h===1?' hour':' hours');
-function openChat(){vt(()=>{$('start').hidden=true;$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',()=>location.reload());offerSave()})}
+const gone=()=>{e2e.K.del('g:'+slug);location.reload()};
+// A return link carries the chat's key in the part after #, which browsers never send to a server.
+function importFragment(){
+  const m=location.hash.match(/^#k=([A-Za-z0-9_-]+)$/);if(!m)return;
+  try{const ent=JSON.parse(td.decode(e2e.unb64(m[1])));if(ent&&ent.priv&&ent.pub&&ent.lpub)e2e.K.set('g:'+slug,ent)}catch(e){}
+  history.replaceState(null,'',location.pathname);
+}
+function openChat(){vt(()=>{$('start').hidden=true;$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offerSave()})}
 function loadTS(key){
   // Only Turnstile's public site key is used here. The secret key stays on the server and is checked there.
   const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';s.async=true;
   s.onload=()=>turnstile.render('#ts',{sitekey:key,callback:t=>{token=t}});document.head.append(s);
 }
-$('sf').onsubmit=async e=>{e.preventDefault();$('serr').hidden=true;
-  if(tsKey&&!token){$('serr').textContent='Complete the human check first';$('serr').hidden=false;shake($('sf'));return}
-  const b=$('sbtn');b.setAttribute('aria-busy','true');
-  try{await api('/api/l/'+slug+'/start',{message:$('sm').value,turnstile:token});haptic('success');openChat()}
-  catch(er){b.removeAttribute('aria-busy');$('serr').textContent=er.message;$('serr').hidden=false;shake($('sf'));if(tsKey&&window.turnstile){turnstile.reset();token=''}}};
+function fail(msg){$('serr').textContent=msg;$('serr').hidden=false;shake($('sf'))}
+$('sf').onsubmit=async e=>{e.preventDefault();if(busy)return;$('serr').hidden=true;
+  const msg=$('sm').value.trim();if(!msg)return;
+  if(tsKey&&!token){fail('Complete the human check first');return}
+  busy=true;const b=$('sbtn');b.setAttribute('aria-busy','true');
+  try{
+    // The guest's token is made here, so repeating this request (lost response, double tap, reload) finds the same chat.
+    let ent=e2e.K.get('g:'+slug),tok;
+    const body={message:msg,turnstile:token};
+    if(info.pub){
+      if(!e2e.ok){fail('This browser cannot do end-to-end encryption. Try a newer one.');return}
+      if(!ent||ent.lpub!==info.pub){const p=await e2e.newPair();ent={priv:p.priv,pub:p.pub,lpub:info.pub}}
+      if(!ent.tok)ent.tok=e2e.rand(16);
+      e2e.K.set('g:'+slug,ent);tok=ent.tok;
+      body.message=await e2e.seal(await e2e.shared(ent.priv,info.pub),msg,'v');body.pub=ent.pub;
+    }else{tok=sessionStorage.getItem('tok_'+slug)||e2e.rand(16);sessionStorage.setItem('tok_'+slug,tok)}
+    body.token=tok;
+    await api('/api/l/'+slug+'/start',body);haptic('success');openChat()
+  }catch(er){fail(er.message||'Something went wrong. Please try again.');if(tsKey&&window.turnstile){turnstile.reset();token=''}}
+  finally{b.removeAttribute('aria-busy');busy=false}};
 
 // Optional: keep this chat in an account so closing the tab never loses it.
-async function claim(){await api('/api/l/'+slug+'/claim',{});haptic('success');toast('Saved. Find it under Chats in your account.');document.querySelector('.save-card')&&document.querySelector('.save-card').remove()}
+async function claim(){await api('/api/l/'+slug+'/claim',{});haptic('success');toast('Saved. Find it under Chats in your account.');const c=document.querySelector('.save-card');if(c)c.remove()}
 function authSheet(){
   let mode=pub.registration_open?'register':'login';
   sheet('Save this chat',(box,close)=>{
@@ -35,20 +58,22 @@ async function offerSave(){
   let st;try{st=await api('/api/l/'+slug+'/state')}catch(e){return}
   if(st.saved||localStorage.getItem('nosave_'+slug))return;
   const card=el('div','save-card'),row=el('div','row'),yes=el('button','btn sm','Save to account'),no=el('button','btn soft sm','Not now');
-  card.append(el('b',null,'Keep this chat if you close the tab?'),el('p','fine','Optional. Save it to an account to pick it up again on any device.'));
+  card.append(el('b',null,'Keep this chat if you close the tab?'),el('p','fine','Optional. Save it to an account to pick it up again. To read it on another device you will also need the chat key from Copy return link.'));
   yes.onclick=async()=>{try{await api('/api/me');await claim()}catch(e){if(e.status===401)authSheet();else toast(e.message)}};
   no.onclick=()=>{localStorage.setItem('nosave_'+slug,'1');card.remove()};
   row.append(yes,no);card.append(row);
   const head=$('chatview').querySelector('.chat-head');if(head)head.after(card);
 }
 async function boot(){
+  importFragment();
   try{pub=await api('/api/public');document.title=pub.name+': private chat'}catch(e){}
-  let info;try{info=await api('/api/l/'+slug+'/info')}catch(e){$('gone').hidden=false;return}
+  try{info=await api('/api/l/'+slug+'/info')}catch(e){$('gone').hidden=false;return}
   $('lbl').textContent=info.label;
   if(info.about){$('about').textContent=info.about;$('about').hidden=false}
   $('welcome').textContent=info.welcome||'Send a message. They will not see who you are, and you do not need an account.';
-  $('nico').innerHTML=ico('clock',20);$('ttlnote').textContent='This chat is deleted automatically after '+ttlWord(info.ttl_hours)+'. You can leave any time with one tap.';
-  try{await api('/api/l/'+slug+'/state');$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',()=>location.reload());offerSave()}
+  $('nico').innerHTML=ico(info.pub?'lock':'clock',20);
+  $('ttlnote').textContent=(info.pub?'Your messages are end-to-end encrypted. ':'')+'This chat is deleted automatically after '+ttlWord(info.ttl_hours)+'. You can leave any time with one tap.';
+  try{await api('/api/l/'+slug+'/state');$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offerSave()}
   catch(e){$('start').hidden=false;stagger(document.querySelector('.intro-in'));if(pub.turnstile_site){tsKey=pub.turnstile_site;loadTS(tsKey)}}
 }
 boot();
