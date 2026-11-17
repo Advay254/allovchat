@@ -22,17 +22,23 @@
     root.textContent = '';
     let st = null, key = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false;
     const pend = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0, other = side === 'o' ? 'v' : 'o';
+    // Privacy mode works both ways: someone who hides their own activity doesn't see the other person's either.
+    const quiet = () => !!(st && st.privacy);
+    const FAIR = "You won't see their typing, read receipts or online status either.";
 
     const head = $('div', 'chat-head');
     if (onBack) { const b = $('button', 'icon-btn back'); b.innerHTML = ico('back', 24); b.setAttribute('aria-label', 'Back'); b.onclick = onBack; head.append(b); }
-    let av = avatar('?');
-    const who = $('div', 'grow'), title = $('div', 'chat-title'), sub = $('div', 'chat-sub'); who.append(title, sub);
-    const revealBtn = $('button', 'btn soft sm reveal-btn'); revealBtn.innerHTML = ico('lock', 18) + '<span>Reveal</span>'; revealBtn.hidden = true;
-    const leaveBtn = $('button', 'btn leave'); leaveBtn.innerHTML = ico('exit', 18) + '<span>Leave</span>'; leaveBtn.setAttribute('aria-label', 'Leave this chat now');
+    let av = avatar('?', 40);
+    const who = $('div', 'grow'), title = $('div', 'chat-title'), sub = $('div', 'chat-sub idle'); who.append(title, sub);
+    const revealBtn = $('button', 'btn soft sm reveal-btn'); revealBtn.innerHTML = ico('user', 18) + '<span class="lbl">Reveal</span>'; revealBtn.hidden = true; revealBtn.setAttribute('aria-label', 'Contact reveal');
+    const leaveBtn = $('button', 'btn leave'); leaveBtn.innerHTML = ico('exit', 18) + '<span class="lbl">Leave</span>'; leaveBtn.setAttribute('aria-label', 'Leave this chat now');
     const moreBtn = $('button', 'icon-btn'); moreBtn.innerHTML = ico('more'); moreBtn.setAttribute('aria-label', 'More options'); moreBtn.setAttribute('aria-haspopup', 'menu');
     head.append(av, who, revealBtn, leaveBtn, moreBtn);
 
+    // One compact strip: encryption on the first line, time left (and privacy state) on the second.
     const note = $('div', 'e2e-note'); note.hidden = true;
+    const nIc = $('span'), nTxt = $('div', 'grow'), n1 = $('div', 'n1'), n2 = $('div', 'n2'), nVer = $('button', 'linkbtn', 'Verify');
+    nTxt.append(n1, n2); nVer.hidden = true; nVer.onclick = () => verifySheet(); note.append(nIc, nTxt, nVer);
     const expiry = $('div', 'expiry'), exIcon = $('span'), exTxt = $('span'); exIcon.innerHTML = ico('clock', 18); expiry.append(exIcon, exTxt); expiry.hidden = true; expiry.setAttribute('role', 'status');
     const msgs = $('div', 'msgs'), foot = $('div', 'chat-foot');
     msgs.setAttribute('role', 'log'); msgs.setAttribute('aria-live', 'polite'); msgs.setAttribute('aria-label', 'Messages');
@@ -55,15 +61,18 @@
       if (!key) return '[Encrypted. The key isn\'t on this device]';
       try { return await e2e.open(key, body, s, ctx); } catch (e) { return '[Couldn\'t decrypt this message]'; }
     };
+    const timeLine = () => st ? 'Ends in ' + left(Math.max(new Date(st.expires_at) - Date.now(), 0)) : '';
+    const paintNote2 = () => { n2.textContent = timeLine(); if (quiet()) n2.append($('span', 'pv', ' \u00b7 Privacy on (works both ways)')); };
     const renderNote = () => {
-      note.hidden = false; note.textContent = '';
-      const ic = $('span'), t = $('span', 'grow');
-      ic.innerHTML = ico(st.e2e && key ? 'lock' : 'shield', 16);
-      if (st.e2e && key) t.textContent = 'End-to-end encrypted. Only you and the other person can read this chat.';
-      else if (st.e2e) t.textContent = "This chat is encrypted, but its key isn't on this device. Open your return link on the device where you started it.";
-      else t.textContent = 'This chat started before end-to-end encryption, so the server can read it until it is deleted.';
-      note.append(ic, t);
-      if (st.e2e && key) { const b = $('button', 'linkbtn', 'Verify'); b.onclick = verifySheet; note.append(b); }
+      const ok = !!(st.e2e && key);
+      note.hidden = false; note.classList.toggle('ok', ok);
+      nIc.innerHTML = ico(ok ? 'lock' : 'shield', 16);
+      n1.textContent = '';
+      if (ok) n1.append($('span', 'long', 'End-to-end encrypted. Only you and the other person can read this chat.'), $('span', 'short', 'End-to-end encrypted'));
+      else if (st.e2e) n1.textContent = "This chat is encrypted, but its key isn't on this device. Open your return link on the device where you started it.";
+      else n1.textContent = 'This chat started before end-to-end encryption, so the server can read it until it is deleted.';
+      nVer.hidden = !ok;
+      paintNote2();
     };
     const verifySheet = async () => {
       let code = '';
@@ -79,7 +88,10 @@
       if (!st) return;
       const ms = new Date(st.expires_at) - Date.now();
       if (ms <= 0) { onGone && onGone(); return; }
-      sub.textContent = typingOn ? 'typing\u2026' : [online ? 'Online' : '', side === 'o' ? 'Anonymous guest' : 'Anonymous chat', 'ends in ' + left(ms)].filter(Boolean).join(' \u00b7 ');
+      const live = quiet() ? '' : typingOn ? 'typing\u2026' : online ? 'Online' : '';
+      sub.textContent = live || (side === 'o' ? 'Anonymous guest' : 'Anonymous chat');
+      sub.classList.toggle('idle', !live);
+      paintNote2();
       if (ms <= 12 * 3600e3) { expiry.hidden = false; exTxt.textContent = 'This conversation will be deleted in ' + left(ms) + '. Wrap up, and share contact details now if you both want to.'; } else expiry.hidden = true;
     };
     const lastRow = () => { const n = typing.previousElementSibling; return n && n.classList.contains('mrow') ? n : null; };
@@ -88,7 +100,7 @@
       row.dataset.id = m.id; row.dataset.side = m.side;
       if (animate) row.classList.add('new');
       if (m.pend) b.classList.add('pend');
-      b.append($('span', null, m.text), $('small', 'meta', hm(m.ts) + (mine ? (m.is_read ? ' \u00b7 Read' : m.pend ? ' \u00b7 Sending' : ' \u00b7 Sent') : '')));
+      b.append($('span', null, m.text), $('small', 'meta', hm(m.ts) + (mine ? (m.is_read && !quiet() ? ' \u00b7 Read' : m.pend ? ' \u00b7 Sending' : ' \u00b7 Sent') : '')));
       row.append(b);
       const prev = lastRow();
       if (prev && prev.dataset.side === m.side) { prev.firstChild.classList.remove('end'); row.classList.add('follow'); }
@@ -107,7 +119,7 @@
         b.disabled = !i.value.trim();
         const c = CONTACT.test(i.value);
         if (hint.hidden === c) { hint.hidden = !c; if (c) haptic('select'); }
-        if (!(st && st.privacy) && Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
+        if (!quiet() && Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
       };
       f.onsubmit = async (e) => {
         e.preventDefault();
@@ -128,8 +140,8 @@
     };
 
     const render = () => {
-      title.textContent = st.peer; online = !!st.online;
-      const na = avatar(st.peer); head.replaceChild(na, av); av = na;
+      title.textContent = st.peer; online = !!st.online && !st.privacy;
+      const na = avatar(st.peer, 40); head.replaceChild(na, av); av = na;
       renderNote();
       msgs.textContent = ''; msgs.append(typing); typing.hidden = true; pend.length = 0;
       st.messages.forEach((m) => msgs.insertBefore(bubble(m, false), typing)); bottom(false);
@@ -193,12 +205,27 @@
     };
     leaveBtn.onclick = leaveNow;
 
+    // Called when privacy turns on, from the switch or from the saved default: hide everything we were showing about them.
+    const goQuiet = () => {
+      typingOn = false; typing.hidden = true; online = false;
+      msgs.querySelectorAll('.mrow.me .meta').forEach((m) => { m.textContent = m.textContent.replace('Read', 'Sent'); });
+      refresh();
+    };
     const privacySheet = () => sheet('Privacy mode', (box, close) => {
       const row = $('div', 'row'), t = $('div', 'grow'); t.append($('b', null, 'Hide my activity'), $('div', 'fine', 'No typing indicator, read receipts or online status from you in this chat.'));
-      const sw = switchEl(!!st.privacy, async (v) => { try { await api(base + '/privacy', { on: v }); st.privacy = v; return true; } catch (e) { toast(e.message); return false; } }, 'Privacy mode');
+      const sw = switchEl(!!st.privacy, async (v) => {
+        try {
+          await api(base + '/privacy', { on: v }); st.privacy = v;
+          if (v) { goQuiet(); toast('Privacy is on. ' + FAIR); }
+          else { refresh(); load(); }
+          return true;
+        } catch (e) { toast(e.message); return false; }
+      }, 'Privacy mode');
       row.append(t, sw);
+      const fair = $('p', 'fair'); fair.innerHTML = ico('eyeoff', 18);
+      fair.append($('span', null, "It works both ways, to keep things fair. While it's on, you also won't see their typing, read receipts or online status, even if they haven't turned privacy on."));
       const done = $('button', 'btn soft wide', 'Done'); done.onclick = close;
-      box.append(row, done);
+      box.append(row, fair, done);
     });
     const retentionSheet = () => sheet('Delete this chat sooner', (box, close) => {
       const ms = new Date(st.expires_at) - Date.now(), opts = [[1, 'In 1 hour'], [6, 'In 6 hours'], [24, 'In 24 hours'], [72, 'In 3 days']].filter(([h]) => h * 3600e3 < ms);
@@ -235,7 +262,7 @@
     const blockSheet = () => confirmSheet('Block this guest?', "They won't be able to start new chats on any of your links.", 'Block', () => act('/block'));
     moreBtn.onclick = () => popover(moreBtn, (pop, close) => {
       menuItem(pop, close, 'flag', 'Report', reportSheet);
-      menuItem(pop, close, 'eyeoff', 'Privacy mode', privacySheet);
+      menuItem(pop, close, 'eyeoff', quiet() ? 'Privacy mode: on' : 'Privacy mode', privacySheet);
       menuItem(pop, close, 'clock', 'Delete sooner', retentionSheet);
       if (st && st.e2e && key) menuItem(pop, close, 'shield', 'Verify encryption', verifySheet);
       if (side === 'o' && st && st.status !== 'blocked') menuItem(pop, close, 'block', 'Block guest', blockSheet);
@@ -257,7 +284,12 @@
         render();
         if (was === false && st.reveal.done) haptic('success');
         if (rev) fillReveal();
-        if (!defDone) { defDone = true; if (localStorage.getItem('privacy') === '1' && !st.privacy) { api(base + '/privacy', { on: true }).then(() => { st.privacy = true; }).catch(() => {}); } }
+        if (!defDone) {
+          defDone = true;
+          if (localStorage.getItem('privacy') === '1' && !st.privacy) {
+            api(base + '/privacy', { on: true }).then(() => { st.privacy = true; goQuiet(); toast('Privacy mode is on by default. ' + FAIR); }).catch(() => {});
+          }
+        }
       } catch (e) { if (e.status === 404) onGone && onGone(); }
     };
     window._exp = setInterval(refresh, 30000);
@@ -278,10 +310,14 @@
           if (document.hidden && window.Notification && Notification.permission === 'granted') new Notification('New message', { body: 'Open the chat to read it' });
         }
       } else if (d.t === 'typing' && d.side !== side) {
+        if (quiet()) return;
         typingOn = true; typing.hidden = false; bottom(true); refresh();
         clearTimeout(tTimer); tTimer = setTimeout(() => { typingOn = false; typing.hidden = true; refresh(); }, 3000);
-      } else if (d.t === 'presence' && d.side !== side) { online = d.on; refresh(); }
-      else if (d.t === 'read' && d.s !== side) {
+      } else if (d.t === 'presence' && d.side !== side) {
+        if (quiet()) return;
+        online = d.on; refresh();
+      } else if (d.t === 'read' && d.s !== side) {
+        if (quiet()) return;
         msgs.querySelectorAll('.mrow.me .meta').forEach((m) => { m.textContent = m.textContent.replace('Sent', 'Read'); });
       } else if (d.t === 'reveal' || d.t === 'status' || d.t === 'retention') load();
       else if (d.t === 'gone') onGone && onGone();
