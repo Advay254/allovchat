@@ -32,20 +32,21 @@ html{scroll-padding-top:84px}
 .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;white-space:nowrap}
 .pill.on{background:color-mix(in srgb,var(--moss) 18%,transparent);color:var(--moss-ink)}.pill.off{background:var(--line);color:var(--mute)}.pill.warn{background:var(--warn-bg);color:var(--warn)}
 .btn.dng{background:transparent;color:var(--bad);box-shadow:inset 0 0 0 1.5px currentColor}
-/* reports: one collapsed row per report, one open at a time */
+/* owners, links and reports: one collapsed row each, one open at a time */
 .card.rep{padding:0;overflow:hidden}
 .rep>summary{list-style:none;display:grid;grid-template-columns:1fr auto;gap:10px;align-items:center;min-height:64px;padding:14px 16px;cursor:pointer;touch-action:manipulation;transition:background .15s}
 .rep>summary::-webkit-details-marker{display:none}
 .rep>summary:hover{background:color-mix(in srgb,var(--card2) 60%,transparent)}
 .rep>summary:focus-visible{outline:2px solid var(--link);outline-offset:-2px;border-radius:var(--r-out)}
 .rep-main{min-width:0;display:grid;gap:4px}
-.rep-head{display:flex;gap:8px;align-items:center;justify-content:space-between}.rep-head b{font-size:16px}
-.rep-meta{display:block}
+.rep-head{display:flex;gap:8px;align-items:center;justify-content:space-between}.rep-head b{font-size:16px;overflow-wrap:anywhere}
+.rep-meta{display:block;overflow-wrap:anywhere}
 .rep-reason{display:-webkit-box;-webkit-line-clamp:1;-webkit-box-orient:vertical;overflow:hidden;overflow-wrap:anywhere;font-size:14px;color:var(--mute)}
 .chev{flex:none;color:var(--mute);transition:transform .22s var(--ease-io)}
 .rep[open]>summary .chev{transform:rotate(180deg)}
 .rep[open]>summary .rep-reason{display:none}
 .rep-body{padding:0 16px 16px;border-top:1px solid var(--line)}
+.rep-body>.acts:first-child{margin-top:14px}
 .rep[open] .rep-body{animation:rise .24s var(--ease-out)}
 .reason{margin:14px 0 10px;overflow-wrap:anywhere}.tx{background:var(--bg);border-radius:var(--r-in);padding:10px 12px;display:grid;gap:4px;font-size:14px;margin-bottom:14px}.tx div{overflow-wrap:anywhere}
 /* Evidence the reporter typed in. The server never saw these messages, so it cannot vouch for them. */

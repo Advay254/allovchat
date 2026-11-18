@@ -20,8 +20,8 @@
     if (window._es) window._es.close();
     clearInterval(window._exp);
     root.textContent = '';
-    let st = null, key = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false;
-    const pend = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0, other = side === 'o' ? 'v' : 'o';
+    let st = null, key = null, tTimer = 0, lastTyped = 0, rev = null, online = false, typingOn = false, defDone = false, unseen = 0;
+    const pend = [], failed = [], viaLink = base.indexOf('/api/l/') === 0, saved = base.indexOf('/api/m/') === 0, other = side === 'o' ? 'v' : 'o';
     // Privacy mode works both ways: someone who hides their own activity doesn't see the other person's either.
     const quiet = () => !!(st && st.privacy);
     const FAIR = "You won't see their typing, read receipts or online status either.";
@@ -40,12 +40,15 @@
     const nIc = $('span'), nTxt = $('div', 'grow'), n1 = $('div', 'n1'), n2 = $('div', 'n2'), nVer = $('button', 'linkbtn', 'Verify');
     nTxt.append(n1, n2); nVer.hidden = true; nVer.onclick = () => verifySheet(); note.append(nIc, nTxt, nVer);
     const expiry = $('div', 'expiry'), exIcon = $('span'), exTxt = $('span'); exIcon.innerHTML = ico('clock', 18); expiry.append(exIcon, exTxt); expiry.hidden = true; expiry.setAttribute('role', 'status');
+    const conn = $('div', 'conn'); conn.hidden = true; conn.setAttribute('role', 'status');
     const msgs = $('div', 'msgs'), foot = $('div', 'chat-foot');
     msgs.setAttribute('role', 'log'); msgs.setAttribute('aria-live', 'polite'); msgs.setAttribute('aria-label', 'Messages');
     const typing = $('div', 'mrow them'), tb = $('div', 'm them typing'); tb.append($('i'), $('i'), $('i')); typing.append(tb); typing.hidden = true;
+    const jumpWrap = $('div', 'jumpwrap'), jump = $('button', 'jump'), badge = $('span', 'badge');
+    jump.type = 'button'; jump.hidden = true; jump.setAttribute('aria-label', 'Jump to the latest message'); jump.innerHTML = ico('back', 20); badge.hidden = true; jump.append(badge); jumpWrap.append(jump);
     const hint = $('div', 'hint'), hintBtn = $('button', 'linkbtn', 'Reveal now'); hint.hidden = true; hint.setAttribute('role', 'status');
     hint.append($('span', null, 'Looks like contact info. Want to reveal this properly?'), hintBtn);
-    root.append(head, note, expiry, msgs, foot);
+    root.append(head, note, expiry, conn, msgs, foot);
     for (let i = 0; i < 3; i++) { const r = $('div', 'mrow ' + (i === 1 ? 'me' : 'them')), s = $('div', 'sk'); s.style.cssText = 'height:42px;border-radius:20px;width:' + (45 + i * 12) + '%'; r.append(s); msgs.append(r); }
 
     // ---- encryption helpers ----
@@ -70,7 +73,7 @@
       n1.textContent = '';
       if (ok) n1.append($('span', 'long', 'End-to-end encrypted. Only you and the other person can read this chat.'), $('span', 'short', 'End-to-end encrypted'));
       else if (st.e2e) n1.textContent = "This chat is encrypted, but its key isn't on this device. Open your return link on the device where you started it.";
-      else n1.textContent = 'This chat started before end-to-end encryption, so the server can read it until it is deleted.';
+      else n1.textContent = "End-to-end encryption isn't active in this chat.";
       nVer.hidden = !ok;
       paintNote2();
     };
@@ -83,7 +86,13 @@
       });
     };
 
+    // ---- scrolling: stay at the bottom unless the reader has scrolled up ----
+    const near = () => msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 160;
     const bottom = (smooth) => msgs.scrollTo({ top: msgs.scrollHeight, behavior: smooth ? 'smooth' : 'auto' });
+    const paintJump = () => { jump.hidden = near(); badge.hidden = !unseen; badge.textContent = unseen > 9 ? '9+' : String(unseen); };
+    msgs.addEventListener('scroll', () => { if (near()) unseen = 0; paintJump(); }, { passive: true });
+    jump.onclick = () => { unseen = 0; bottom(true); };
+
     const refresh = () => {
       if (!st) return;
       const ms = new Date(st.expires_at) - Date.now();
@@ -106,41 +115,74 @@
       if (prev && prev.dataset.side === m.side) { prev.firstChild.classList.remove('end'); row.classList.add('follow'); }
       return row;
     };
-    const add = (m, animate) => { typing.hidden = true; const row = bubble(m, animate); msgs.insertBefore(row, typing); bottom(animate); return row; };
+    const add = (m, animate) => {
+      const stick = near() || m.side === side;
+      typing.hidden = true;
+      const row = bubble(m, animate); msgs.insertBefore(row, typing);
+      if (stick) bottom(animate); else { unseen++; paintJump(); }
+      return row;
+    };
     const act = async (path) => { try { await api(base + path, {}); load(); } catch (e) { toast(e.message); } };
     // Many incoming messages in a row cause one "mark as read" request, not one each.
     const markRead = debounce(() => api(base + '/state').catch(() => {}), 700);
 
+    // ---- sending: a message that fails stays on screen with Retry, and retrying reuses its key so it is stored once ----
+    const setMeta = (p, t) => { p.row.querySelector('.meta').textContent = hm(p.ts) + ' \u00b7 ' + t; };
+    const drop = (p) => { let k = pend.indexOf(p); if (k > -1) pend.splice(k, 1); k = failed.indexOf(p); if (k > -1) failed.splice(k, 1); };
+    const markFailed = (p) => {
+      const b = p.row.firstChild; b.classList.remove('pend'); b.classList.add('failed'); setMeta(p, 'Not sent');
+      if (!p.row.querySelector('.fail-actions')) {
+        const a = $('div', 'fail-actions'), r = $('button', null, 'Retry'), d = $('button', null, 'Delete');
+        r.type = 'button'; d.type = 'button';
+        r.onclick = () => trySend(p); d.onclick = () => { p.row.remove(); drop(p); };
+        a.append(r, d); b.append(a);
+      }
+      if (failed.indexOf(p) < 0) failed.push(p);
+    };
+    const trySend = async (p) => {
+      const fa = p.row.querySelector('.fail-actions'); if (fa) fa.remove();
+      const b = p.row.firstChild; b.classList.remove('failed'); b.classList.add('pend'); setMeta(p, 'Sending');
+      if (pend.indexOf(p) < 0) pend.push(p);
+      try { await api(base + '/send', { body: p.ct, cid: p.cid }); const k = failed.indexOf(p); if (k > -1) failed.splice(k, 1); }
+      catch (er) { markFailed(p); toast(er.message); }
+    };
+
     const composer = () => {
-      const f = $('form', 'composer'), i = $('input'), b = $('button', 'icon-btn send'), cnt = $('span', 'count');
-      let mx = 0; // longest allowed message, from the server; the counter only shows near the limit
-      i.placeholder = 'Message'; i.autocomplete = 'off'; i.enterKeyHint = 'send'; i.setAttribute('aria-label', 'Message');
+      const f = $('form', 'composer'), i = $('textarea'), b = $('button', 'icon-btn send'), cnt = $('span', 'count');
+      const lim = { mx: 0, words: [] };
+      const fine = matchMedia('(hover:hover) and (pointer:fine)').matches; // Enter sends on a desktop keyboard; on a phone it starts a new line
+      i.rows = 1; i.placeholder = 'Message'; i.autocomplete = 'off'; i.enterKeyHint = fine ? 'send' : 'enter'; i.setAttribute('aria-label', 'Message');
       b.type = 'submit'; b.disabled = true; b.setAttribute('aria-label', 'Send'); b.innerHTML = ico('send', 22);
       cnt.hidden = true; cnt.setAttribute('aria-hidden', 'true');
-      (window._limits = window._limits || api('/api/limits').catch(() => ({}))).then((l) => { if (l && l.max_msg_len) { mx = l.max_msg_len; i.maxLength = mx; } });
+      (window._limits = window._limits || api('/api/limits').catch(() => ({}))).then((l) => { if (l && l.max_msg_len) { lim.mx = l.max_msg_len; i.maxLength = lim.mx; } if (l && l.blocked_words) lim.words = l.blocked_words; });
+      const fit = () => { i.style.height = 'auto'; i.style.height = Math.min(i.scrollHeight, 140) + 'px'; };
+      const blocked = (s) => { const t = s.toLowerCase(); return lim.words.some((w) => t.indexOf(w) > -1); };
       i.oninput = () => {
+        fit();
         b.disabled = !i.value.trim();
-        const rem = mx ? mx - i.value.length : 0;
-        cnt.hidden = !(mx && rem <= 100); cnt.textContent = rem;
+        const rem = lim.mx ? lim.mx - i.value.length : 0;
+        cnt.hidden = !(lim.mx && rem <= 100); cnt.textContent = rem;
         const c = CONTACT.test(i.value);
         if (hint.hidden === c) { hint.hidden = !c; if (c) haptic('select'); }
         if (!quiet() && Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
       };
+      i.onkeydown = (e) => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && fine) { e.preventDefault(); if (i.value.trim()) f.requestSubmit(); } };
       f.onsubmit = async (e) => {
         e.preventDefault();
         const v = i.value.trim(); if (!v) return;
-        i.value = ''; b.disabled = true; cnt.hidden = true; hint.hidden = true; haptic('select');
+        if (blocked(v)) { shake(f); toast("That message can't be sent here. Please reword it."); return; }
+        i.value = ''; fit(); b.disabled = true; cnt.hidden = true; hint.hidden = true; haptic('select');
         // The message gets its own key (cid) before it is sent. If the request is retried, the server stores it only once.
-        const cid = e2e.rand(16);
+        const cid = e2e.rand(16), ts = new Date().toISOString();
         let ct = v;
-        try { if (st.e2e) ct = await e2e.seal(key, v, side); } catch (er) { i.value = v; toast("Couldn't encrypt that message"); return; }
-        const row = add({ id: 't' + cid, side, body: ct, text: v, ts: new Date().toISOString(), pend: true }, true), p = { row, cid };
+        try { if (st.e2e) ct = await e2e.seal(key, v, side); } catch (er) { i.value = v; fit(); toast("Couldn't encrypt that message"); return; }
+        const row = add({ id: 't' + cid, side, body: ct, text: v, ts, pend: true }, true), p = { row, cid, ct, ts };
         pend.push(p);
         try { await api(base + '/send', { body: ct, cid }); }
-        catch (er) { row.remove(); pend.splice(pend.indexOf(p), 1); i.value = v; b.disabled = false; shake(f); toast(er.message); }
+        catch (er) { markFailed(p); toast(er.message); }
       };
       f.append(i, cnt, b);
-      if (matchMedia('(hover:hover)').matches) setTimeout(() => i.focus(), 0);
+      if (fine) setTimeout(() => i.focus(), 0);
       return f;
     };
 
@@ -148,8 +190,10 @@
       title.textContent = st.peer; online = !!st.online && !st.privacy;
       const na = avatar(st.peer, 40); head.replaceChild(na, av); av = na;
       renderNote();
-      msgs.textContent = ''; msgs.append(typing); typing.hidden = true; pend.length = 0;
-      st.messages.forEach((m) => msgs.insertBefore(bubble(m, false), typing)); bottom(false);
+      msgs.textContent = ''; msgs.append(typing, jumpWrap); typing.hidden = true; pend.length = 0; unseen = 0;
+      st.messages.forEach((m) => msgs.insertBefore(bubble(m, false), typing));
+      failed.forEach((p) => { msgs.insertBefore(p.row, typing); pend.push(p); }); // unsent messages stay put across a refresh
+      bottom(false); paintJump();
       revealBtn.hidden = st.status !== 'open';
       revealBtn.lastChild.textContent = st.reveal.done ? 'Contact' : 'Reveal';
       foot.textContent = ''; hint.hidden = true;
@@ -252,15 +296,15 @@
       note2.rows = 3; note2.maxLength = 300; note2.placeholder = 'Add details (optional)'; note2.setAttribute('aria-label', 'Details');
       const row = $('div', 'row'), ok = $('button', 'btn', 'Send report'), no = $('button', 'btn soft', 'Cancel');
       let evBox = null;
-      if (st.e2e) { evBox = $('label', 'opt'); ev.type = 'checkbox'; ev.checked = true; evBox.append(ev, $('span', null, 'Attach the last 8 messages so moderators can see what happened')); }
+      if (st.e2e) { evBox = $('label', 'opt'); ev.type = 'checkbox'; ev.checked = true; evBox.append(ev, $('span', null, 'Attach the last 8 messages so our team can see what happened')); }
       ok.onclick = async () => {
         if (!code) { err.hidden = false; shake(list); return; }
         const evidence = st.e2e && ev.checked ? st.messages.slice(-8).map((m) => (m.side === side ? 'You' : 'Them') + ': ' + m.text).join('\n') : '';
-        try { await api(base + '/report', { code, note: note2.value, evidence, cid }); haptic('success'); close(); toast('Thanks. Moderators will take a look.'); }
+        try { await api(base + '/report', { code, note: note2.value, evidence, cid }); haptic('success'); close(); toast('Thanks. Our team will take a look.'); }
         catch (e) { err.textContent = e.message; err.hidden = false; }
       };
       no.onclick = close; row.append(no, ok);
-      box.append($('p', 'fine', st.e2e ? "Reports go to the platform's moderators. This chat is end-to-end encrypted, so they can only see what you choose to attach." : "Reports go to the platform's moderators. They only see this chat because you reported it."), list, note2);
+      box.append($('p', 'fine', st.e2e ? 'Reports go to our team. This chat is end-to-end encrypted, so we can only see what you choose to attach.' : 'Reports go to our team. We only see this chat because you reported it.'), list, note2);
       if (evBox) box.append(evBox);
       box.append(err, row);
     });
@@ -300,13 +344,14 @@
     window._exp = setInterval(refresh, 30000);
 
     const es = new EventSource(base + '/stream'); window._es = es;
-    es.onopen = load;
+    es.onopen = () => { conn.hidden = true; load(); };
+    es.onerror = () => { conn.hidden = false; conn.textContent = navigator.onLine ? 'Reconnecting\u2026' : "You're offline. We'll reconnect when you're back."; };
     es.onmessage = async (ev) => {
       const d = JSON.parse(ev.data);
       if (d.t === 'msg') {
         if (d.side === side) {
           const k = d.cid ? pend.findIndex((p) => p.cid === d.cid) : -1;
-          if (k > -1) { const p = pend.splice(k, 1)[0]; p.row.dataset.id = d.id; p.row.firstChild.classList.remove('pend'); p.row.querySelector('.meta').textContent = hm(d.ts) + ' \u00b7 Sent'; return; }
+          if (k > -1) { const p = pend[k]; drop(p); p.row.dataset.id = d.id; p.row.firstChild.classList.remove('pend', 'failed'); const fa = p.row.querySelector('.fail-actions'); if (fa) fa.remove(); setMeta(p, 'Sent'); return; }
         }
         if (msgs.querySelector('[data-id="' + d.id + '"]')) return;
         add({ id: d.id, side: d.side, body: d.body, text: await dec(d.body, d.side), ts: d.ts }, true);
@@ -316,7 +361,7 @@
         }
       } else if (d.t === 'typing' && d.side !== side) {
         if (quiet()) return;
-        typingOn = true; typing.hidden = false; bottom(true); refresh();
+        typingOn = true; typing.hidden = false; if (near()) bottom(true); refresh();
         clearTimeout(tTimer); tTimer = setTimeout(() => { typingOn = false; typing.hidden = true; refresh(); }, 3000);
       } else if (d.t === 'presence' && d.side !== side) {
         if (quiet()) return;

@@ -16,6 +16,7 @@
 .intro-in .note{display:flex;gap:10px;align-items:flex-start;padding:12px 14px;border-radius:var(--r-in);background:var(--card);box-shadow:inset 0 0 0 1px var(--line);font-size:14px;color:var(--mute)}.intro-in .note svg{flex:none;color:var(--link)}
 .auth-card,.intro-in{position:relative}
 .auth-card .logo{display:flex;align-items:center;gap:10px}
+.del-list{margin:0 0 12px;padding-left:20px;line-height:1.7}
 /* ---- chat screen, phone first ---- */
 .chat-head{gap:4px;padding:calc(6px + var(--safe-t)) 8px 6px}
 .chat-head .av{width:40px;height:40px;margin-right:4px}
@@ -24,15 +25,27 @@
 .chat-title,.chat-sub{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .chat-title{font-size:16px}.chat-sub{font-size:12.5px;color:var(--moss-ink)}.chat-sub.idle{color:var(--mute)}
 .e2e-note{display:flex;gap:10px;align-items:center;padding:7px 12px;font-size:12px;line-height:1.35;color:var(--mute);background:var(--card2);border-bottom:1px solid var(--line)}
-.e2e-note svg{flex:none;color:var(--link)}.e2e-note .linkbtn{flex:none;padding:6px 4px;font-size:13px}
+.e2e-note svg{flex:none;color:var(--link)}
+.e2e-note .linkbtn{flex:none;min-height:44px;margin:-8px -6px;padding:0 10px;font-size:13px} /* a full 44px tap target without making the strip taller */
 .e2e-note .n1{font-size:13px}.e2e-note.ok .n1{color:var(--ink);font-weight:600}
 .e2e-note .n1 .short{display:none}
 .e2e-note .pv{color:var(--link);font-weight:600}
+.conn{padding:6px 12px;font-size:13px;text-align:center;background:var(--warn-bg);color:var(--warn)}
 .msgs{padding:14px 12px;overscroll-behavior:contain}
 .m{max-width:85%}
+.m>span:first-child{white-space:pre-wrap;overflow-wrap:anywhere}
+.m.me.failed,.m.failed{background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1.5px var(--bad)}
+.m.failed .meta{color:var(--bad);opacity:1;font-weight:600}
+.fail-actions{display:flex;gap:16px;margin-top:2px}
+.fail-actions button{min-height:36px;padding:0;border:0;background:none;color:var(--bad);font:700 13px var(--sans);cursor:pointer;touch-action:manipulation}
+.jumpwrap{position:sticky;bottom:12px;height:0;z-index:2;pointer-events:none}
+.jump{position:absolute;right:0;bottom:0;width:44px;height:44px;border:0;border-radius:50%;background:var(--card);color:var(--ink);box-shadow:inset 0 0 0 1px var(--line),0 6px 16px rgba(11,18,32,.14);display:grid;place-items:center;cursor:pointer;pointer-events:auto;touch-action:manipulation}
+.jump[hidden]{display:none}.jump svg{transform:rotate(-90deg)}
+.jump .badge{position:absolute;top:-6px;right:-4px;min-width:20px;height:20px;padding:0 5px;border-radius:10px;background:var(--pri);color:var(--on);font:700 12px/20px var(--sans);text-align:center}
 .chat-foot{padding:8px 10px calc(8px + var(--safe-b));border-top:1px solid var(--line);background:color-mix(in srgb,var(--card) 88%,transparent)}
-.composer{position:relative}
-.composer input{min-height:46px}
+.composer{position:relative;display:flex;gap:8px;align-items:flex-end}
+.composer textarea{flex:1;min-width:0;min-height:46px;max-height:140px;padding:12px 18px;border-radius:23px;resize:none;line-height:1.35;overflow-y:auto}
+.composer .send{flex:none}
 .count{position:absolute;right:62px;top:-22px;padding:1px 8px;border-radius:99px;background:var(--card);box-shadow:inset 0 0 0 1px var(--line);font-size:12px;color:var(--mute);font-variant-numeric:tabular-nums}
 .fair{display:flex;gap:10px;align-items:flex-start;margin:0;padding:12px 14px;border-radius:var(--r-in);background:var(--card2);box-shadow:inset 0 0 0 1px var(--line);font-size:14px;color:var(--mute)}.fair svg{flex:none;color:var(--link);margin-top:2px}
 @media(max-width:520px){
