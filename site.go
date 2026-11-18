@@ -18,7 +18,7 @@ import (
 	"time"
 )
 
-const siteUpdated = "2026-11-14"
+const siteUpdated = "2026-11-18"
 
 type post struct {
 	Slug, Title, Desc, Date string
@@ -109,7 +109,7 @@ var posts = []post{
 
 const aboutMD = `Meet without revealing. Connect without pressure. Post your link anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block, and every person gets a fresh temporary name for each chat. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
 
-A conversation can last at most 7 days. People are warned 12 hours before it is deleted, and either person can end it sooner. Chats are encrypted in transit but not end-to-end encrypted, and being anonymous to the person you are talking to is not the same as being untraceable.
+A conversation can last at most 7 days. People are warned 12 hours before it is deleted, and either person can end it sooner. Messages and shared contact details are end-to-end encrypted in the browser, so the server stores only ciphertext. It still sees metadata such as timing and message sizes, chats that started before encryption was added stay readable by the server until they expire, and being anonymous to the person you are talking to is not the same as being untraceable.
 
 The code is open source under the MIT license.`
 
@@ -155,14 +155,24 @@ func (a *App) render(w http.ResponseWriter, name string, d pageData) {
 		return
 	}
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	// Without BASE_URL the page's links come from the request's Host header, so a shared cache must not keep it.
+	if a.cfg.BaseURL == "" {
+		w.Header().Set("Cache-Control", "no-store")
+	} else {
+		w.Header().Set("Cache-Control", "public, max-age=300")
+	}
 	w.Write(buf.Bytes())
 }
+
+var baseWarn sync.Once
 
 func (a *App) base(r *http.Request) string {
 	if a.cfg.BaseURL != "" {
 		return a.cfg.BaseURL
 	}
+	baseWarn.Do(func() {
+		log.Printf("WARNING: BASE_URL is not set, so canonical links and the sitemap are built from the request Host header. Set BASE_URL to your public address.")
+	})
 	s := "http"
 	if r.TLS != nil || r.Header.Get("X-Forwarded-Proto") == "https" {
 		s = "https"
@@ -195,6 +205,7 @@ func (a *App) siteRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /favicon.svg", a.favicon)
 	mux.HandleFunc("GET /og.png", a.ogImage)
 	mux.HandleFunc("GET /icons/{size}", a.icon)
+	a.publicRoutes(mux)
 }
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {
@@ -263,6 +274,8 @@ func (a *App) sitemap(w http.ResponseWriter, r *http.Request) {
 	add := func(p, d string) { fmt.Fprintf(&s, "<url><loc>%s%s</loc><lastmod>%s</lastmod></url>", b, p, d) }
 	add("/", siteUpdated)
 	add("/about", siteUpdated)
+	add("/privacy", siteUpdated)
+	add("/terms", siteUpdated)
 	add("/blog", posts[0].Date)
 	for _, p := range posts {
 		add("/blog/"+p.Slug, p.Date)
@@ -280,8 +293,8 @@ func (a *App) robots(w http.ResponseWriter, r *http.Request) {
 func (a *App) llms(w http.ResponseWriter, r *http.Request) {
 	b, site := a.base(r), a.set.get("site_name")
 	var s strings.Builder
-	fmt.Fprintf(&s, "# %s\n\n> %s\n\nPrivate chats from a link. Guests write without an account, the owner approves each chat, every person gets a fresh temporary name per chat, and contact details are shared only when both people agree. Chats are deleted after 7 days at most.\n\n## Pages\n\n", site, a.set.get("tagline"))
-	fmt.Fprintf(&s, "- [About](%s/about): what it is, why it exists, what it does not protect\n- [Blog](%s/blog): practical notes on private conversations\n\n## Posts\n\n", b, b)
+	fmt.Fprintf(&s, "# %s\n\n> %s\n\nPrivate chats from a link. Guests write without an account, the owner approves each chat, every person gets a fresh temporary name per chat, and contact details are shared only when both people agree. Messages are end-to-end encrypted in the browser. Chats are deleted after 7 days at most.\n\n## Pages\n\n", site, a.set.get("tagline"))
+	fmt.Fprintf(&s, "- [About](%s/about): what it is, why it exists, what it does not protect\n- [Privacy](%s/privacy): what is stored and for how long\n- [Terms](%s/terms): the rules for using it\n- [Blog](%s/blog): practical notes on private conversations\n\n## Posts\n\n", b, b, b, b)
 	for _, p := range posts {
 		fmt.Fprintf(&s, "- [%s](%s/blog/%s): %s\n", p.Title, b, p.Slug, p.Desc)
 	}
