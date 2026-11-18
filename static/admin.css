@@ -1,4 +1,5 @@
 .adm-body{background:var(--bg)}
+:root{--moss-ink:#07714F} /* the green for small text: about 6:1 on white; --moss stays for fills */
 html{scroll-padding-top:84px}
 .adm-side{position:sticky;top:0;z-index:30;padding:calc(8px + var(--safe-t)) 12px 8px;background:color-mix(in srgb,var(--bg) 88%,transparent);backdrop-filter:blur(14px) saturate(1.4);border-bottom:1px solid var(--line)}
 .adm-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;min-height:48px}
@@ -29,7 +30,7 @@ html{scroll-padding-top:84px}
 .tbl tbody tr{animation:rise .3s var(--ease-out) backwards;animation-delay:calc(var(--i,0)*30ms)}
 .tbl .ac{display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end}.tbl form,.act form{margin:0}
 .pill{display:inline-block;padding:3px 10px;border-radius:99px;font-size:12px;font-weight:700;white-space:nowrap}
-.pill.on{background:color-mix(in srgb,var(--moss) 18%,transparent);color:var(--moss)}.pill.off{background:var(--line);color:var(--mute)}.pill.warn{background:var(--warn-bg);color:var(--warn)}
+.pill.on{background:color-mix(in srgb,var(--moss) 18%,transparent);color:var(--moss-ink)}.pill.off{background:var(--line);color:var(--mute)}.pill.warn{background:var(--warn-bg);color:var(--warn)}
 .btn.dng{background:transparent;color:var(--bad);box-shadow:inset 0 0 0 1.5px currentColor}
 /* reports: one collapsed row per report, one open at a time */
 .card.rep{padding:0;overflow:hidden}
@@ -47,6 +48,8 @@ html{scroll-padding-top:84px}
 .rep-body{padding:0 16px 16px;border-top:1px solid var(--line)}
 .rep[open] .rep-body{animation:rise .24s var(--ease-out)}
 .reason{margin:14px 0 10px;overflow-wrap:anywhere}.tx{background:var(--bg);border-radius:var(--r-in);padding:10px 12px;display:grid;gap:4px;font-size:14px;margin-bottom:14px}.tx div{overflow-wrap:anywhere}
+/* Evidence the reporter typed in. The server never saw these messages, so it cannot vouch for them. */
+.tx[aria-label^="Messages the reporter"]::before{content:"Unverified: written by the reporter, not checked by the server";justify-self:start;padding:3px 8px;border-radius:8px;background:var(--warn-bg);color:var(--warn);font-size:12px;font-weight:700;margin-bottom:4px}
 .acts{display:grid;gap:8px}
 .act{display:grid;grid-template-columns:1fr auto;grid-template-areas:"t f" "d d";gap:4px 12px;align-items:center;padding:12px;border-radius:var(--r-in);box-shadow:inset 0 0 0 1px var(--line)}
 .act>div{display:contents}

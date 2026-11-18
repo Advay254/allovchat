@@ -112,11 +112,16 @@
     const markRead = debounce(() => api(base + '/state').catch(() => {}), 700);
 
     const composer = () => {
-      const f = $('form', 'composer'), i = $('input'), b = $('button', 'icon-btn send');
+      const f = $('form', 'composer'), i = $('input'), b = $('button', 'icon-btn send'), cnt = $('span', 'count');
+      let mx = 0; // longest allowed message, from the server; the counter only shows near the limit
       i.placeholder = 'Message'; i.autocomplete = 'off'; i.enterKeyHint = 'send'; i.setAttribute('aria-label', 'Message');
       b.type = 'submit'; b.disabled = true; b.setAttribute('aria-label', 'Send'); b.innerHTML = ico('send', 22);
+      cnt.hidden = true; cnt.setAttribute('aria-hidden', 'true');
+      (window._limits = window._limits || api('/api/limits').catch(() => ({}))).then((l) => { if (l && l.max_msg_len) { mx = l.max_msg_len; i.maxLength = mx; } });
       i.oninput = () => {
         b.disabled = !i.value.trim();
+        const rem = mx ? mx - i.value.length : 0;
+        cnt.hidden = !(mx && rem <= 100); cnt.textContent = rem;
         const c = CONTACT.test(i.value);
         if (hint.hidden === c) { hint.hidden = !c; if (c) haptic('select'); }
         if (!quiet() && Date.now() - lastTyped > 2000) { lastTyped = Date.now(); api(base + '/typing', {}).catch(() => {}); }
@@ -124,7 +129,7 @@
       f.onsubmit = async (e) => {
         e.preventDefault();
         const v = i.value.trim(); if (!v) return;
-        i.value = ''; b.disabled = true; hint.hidden = true; haptic('select');
+        i.value = ''; b.disabled = true; cnt.hidden = true; hint.hidden = true; haptic('select');
         // The message gets its own key (cid) before it is sent. If the request is retried, the server stores it only once.
         const cid = e2e.rand(16);
         let ct = v;
@@ -134,7 +139,7 @@
         try { await api(base + '/send', { body: ct, cid }); }
         catch (er) { row.remove(); pend.splice(pend.indexOf(p), 1); i.value = v; b.disabled = false; shake(f); toast(er.message); }
       };
-      f.append(i, b);
+      f.append(i, cnt, b);
       if (matchMedia('(hover:hover)').matches) setTimeout(() => i.focus(), 0);
       return f;
     };
