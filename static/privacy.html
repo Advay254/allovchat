@@ -1,0 +1,26 @@
+{{define "content"}}
+<section class="site section"><div class="prose">
+<h1 class="rise">Privacy</h1>
+<p>This page explains what {{.Site}} stores, for how long, and who can see it. It describes how the software works. If you run your own copy, you are the operator, so check that it still fits.</p>
+<h2>What is stored</h2>
+<p><b>Owner accounts.</b> A username and a hashed password. No email address or phone number is asked for.</p>
+<p><b>Guests.</b> No account. Your browser keeps a random key and token so you can come back to your chat. A hashed device marker lets an owner block a guest.</p>
+<p><b>Messages and contact details.</b> They are encrypted in your browser before they are sent, so the server stores ciphertext it cannot read. Chats that started before encryption was added are stored as readable text until they expire.</p>
+<p><b>Metadata.</b> The server can see that a chat exists, when it started, when messages were sent and how long they are, the temporary names, and the link names owners chose.</p>
+<h2>How long it is kept</h2>
+<p>A chat lasts 7 days at most, or less if the link or either person sets a shorter time. A warning shows 12 hours before deletion. Shared contact details are removed 24 hours after the reveal. The dashboard activity log, which records admin actions only, is kept for 180 days. Sign-in sessions expire on their own.</p>
+<h2>Cookies and tracking</h2>
+<p>Only the cookies needed to sign in, return to a chat and block abusers. There are no ads, no analytics and no tracking pixels. If the operator turns on the Cloudflare Turnstile human check, Cloudflare loads on sign-in and sees what any site you visit would see.</p>
+<h2>IP addresses</h2>
+<p>They are held in memory for a short time to slow down abuse, such as repeated sign-in attempts. Failed dashboard sign-ins are logged with the IP address. The hosting provider may keep its own standard logs.</p>
+<h2>Reports</h2>
+<p>When you report a chat, you choose what to send. In an encrypted chat, moderators only see the messages you attach, and the server cannot check that they are genuine. A report is removed when its chat is deleted.</p>
+<h2>Your choices</h2>
+<p>Leave deletes a chat for both people at once. Owners can delete their links and the chats on them. To have an account removed, ask the operator.</p>
+<h2>What this does not promise</h2>
+<p>Being anonymous to the other person is not the same as being untraceable. Encryption keys have no forward secrecy, so if someone gets the key from your device they could read that chat. The server also delivers the code your browser runs, so you are trusting the operator not to change it. The verification code in each chat helps you check that keys match.</p>
+<h2>Questions</h2>
+<p>Open an issue on <a href="https://github.com/Advay254/allovchat">GitHub</a>. For security problems, see the <a href="https://github.com/Advay254/allovchat/blob/main/SECURITY.md">security policy</a>.</p>
+<p class="fine">Last updated 18 November 2026.</p>
+</div></section>
+{{end}}
