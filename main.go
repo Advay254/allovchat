@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"embed"
 	"log"
@@ -38,7 +39,7 @@ type App struct {
 }
 
 // Paths the app already uses, which an admin slug must not collide with.
-var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true}
+var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true, "privacy": true, "terms": true, "app": true, "api": true, "l": true, "r": true}
 
 const csp = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
@@ -121,16 +122,22 @@ func main() {
 		defer c()
 		srv.Shutdown(sc)
 	}()
-	log.Printf("allovchat listening on :%s (admin dashboard enabled, %d database connections)", cfg.Port, cfg.DBMaxConns)
+	log.Printf("allovchat listening on :%s (admin dashboard enabled, %d database connections, assets %s)", cfg.Port, cfg.DBMaxConns, buildID)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
 }
 
+// cacheFor caches static files briefly, or for a year when the URL carries the build fingerprint (?v=...),
+// because a new deploy changes that fingerprint and so the URL.
 func cacheFor(h http.Handler, secs int) http.Handler {
-	v := "public, max-age=" + strconv.Itoa(secs)
+	short := "public, max-age=" + strconv.Itoa(secs)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Cache-Control", v)
+		if r.URL.Query().Get("v") != "" {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		} else {
+			w.Header().Set("Cache-Control", short)
+		}
 		h.ServeHTTP(w, r)
 	})
 }
@@ -139,7 +146,7 @@ func (a *App) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /health", a.health)
 	mux.HandleFunc("GET /app", a.page("app.html"))
-	mux.HandleFunc("GET /l/{slug}", a.page("chat.html"))
+	mux.HandleFunc("GET /l/{slug}", a.chatPage)
 	mux.Handle("GET /static/", cacheFor(http.FileServerFS(staticFS), 300))
 	a.siteRoutes(mux)
 	a.apiRoutes(mux)
@@ -196,6 +203,8 @@ func (a *App) guard(next http.Handler) http.Handler {
 	})
 }
 
+// page serves one of the plain HTML screens. {{BASE}} becomes the site's public address (link previews need absolute URLs),
+// and script and style URLs get the build fingerprint.
 func (a *App) page(name string) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		b, err := staticFS.ReadFile("static/" + name)
@@ -203,9 +212,10 @@ func (a *App) page(name string) http.HandlerFunc {
 			http.NotFound(w, r)
 			return
 		}
+		b = bytes.ReplaceAll(b, []byte("{{BASE}}"), []byte(a.base(r)))
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.Header().Set("Cache-Control", "no-cache")
-		w.Write(b)
+		w.Write(versioned(b))
 	}
 }
 
