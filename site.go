@@ -6,13 +6,8 @@ import (
 	"fmt"
 	"html"
 	"html/template"
-	"image"
-	"image/color"
-	"image/png"
 	"log"
-	"math"
 	"net/http"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -102,24 +97,40 @@ var posts = []post{
 			"## 4. Use quiet hours",
 			"An auto-reply that says you will answer tonight sets expectations and stops people sending five follow-ups.",
 			"## 5. Report what crosses the line",
-			"Scams and harassment can be reported from inside the chat. Moderators see that conversation only because you sent it to them.",
+			"Scams and harassment can be reported from inside the chat. Our team sees that conversation only because you chose to send it to us.",
 		},
 	},
 }
 
-const aboutMD = `Meet without revealing. Connect without pressure. Post your link anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block, and every person gets a fresh temporary name for each chat. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
+type qa struct{ Q, A string }
 
-A conversation can last at most 7 days. People are warned 12 hours before it is deleted, and either person can end it sooner. Messages and shared contact details are end-to-end encrypted in the browser, so the server stores only ciphertext. It still sees metadata such as timing and message sizes, chats that started before encryption was added stay readable by the server until they expire, and being anonymous to the person you are talking to is not the same as being untraceable.
+// faqs appear on the landing page and, word for word, in its FAQPage structured data.
+var faqs = []qa{
+	{"Do guests need an account?", "No. Anyone who opens your link can write to you straight away. They get a temporary name and never have to share an email address, phone number or profile."},
+	{"Who can read my messages?", "Only you and the person you are chatting with. Messages are encrypted in your browser before they are sent, so our servers store ciphertext that we cannot read. We can see basic metadata, such as when a chat started and how large messages are."},
+	{"How long do chats last?", "At most 7 days. The link owner can choose a shorter limit, from 1 hour to 7 days, and either person can end a chat sooner. Both people see a warning 12 hours before a chat is deleted."},
+	{"Is it anonymous?", "You are anonymous to the person you chat with: guests need no account, and everyone gets a fresh temporary name in every chat. Anonymous is not the same as untraceable, so share only what you are comfortable having connected to you."},
+	{"How does the contact reveal work?", "Either person can offer a contact, such as a WhatsApp number or a handle. Nothing is shown until both of you agree. Then each of you sees the other's details once, and they are deleted after 24 hours."},
+	{"What if someone is abusive or sends spam?", "You approve every chat before it starts. You can block a guest in one tap, report a chat to our team, or press Leave to delete the chat for both people at once."},
+	{"Does privacy mode hide things from me too?", "Yes. Privacy mode hides your typing, read receipts and online status, and it hides theirs from you as well. That keeps things fair, even if the other person has not turned it on."},
+	{"Is AllovChat free and open source?", "Yes. The code is open source under the MIT license. You can read it, run your own copy or contribute on GitHub."},
+	{"Can I delete my account?", "Yes, at any time from Settings. Deleting your account removes your links and every chat on them, and it cannot be undone."},
+}
+
+const aboutMD = `AllovChat gives you a link that opens a private chat. Post it anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block, and every person gets a fresh temporary name for each chat. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
+
+A conversation lasts at most 7 days. Both people are warned 12 hours before it is deleted, and either person can end it sooner. Messages and shared contact details are end-to-end encrypted in the browser, so the server stores only ciphertext it cannot read. It still sees metadata such as timing and message sizes. Being anonymous to the person you are talking to is different from being untraceable.
 
 The code is open source under the MIT license.`
 
 type pageData struct {
 	Site, Tagline, Title, Desc, Canon, Image, Type, Path, Base string
-	Noindex                                                   bool
-	LD                                                        template.JS
-	Posts                                                     []post
-	Post                                                      post
-	Year                                                      int
+	Noindex                                                    bool
+	LD                                                         template.JS
+	Posts                                                      []post
+	Post                                                       post
+	FAQ                                                        []qa
+	Year                                                       int
 }
 
 var (
@@ -161,7 +172,7 @@ func (a *App) render(w http.ResponseWriter, name string, d pageData) {
 	} else {
 		w.Header().Set("Cache-Control", "public, max-age=300")
 	}
-	w.Write(buf.Bytes())
+	w.Write(versioned(buf.Bytes()))
 }
 
 var baseWarn sync.Once
@@ -210,17 +221,23 @@ func (a *App) siteRoutes(mux *http.ServeMux) {
 
 func (a *App) home(w http.ResponseWriter, r *http.Request) {
 	site := a.set.get("site_name")
-	d := a.pd(r, "/", site+": meet without revealing", "Meet without revealing. Connect without pressure. Share a link, chat first, and swap contact details later, only when you both agree.")
+	d := a.pd(r, "/", site+": private chats from a link, without revealing who you are", "Meet without revealing. Connect without pressure. Share a link, chat first with end-to-end encryption, and swap contact details later, only when you both agree.")
+	d.FAQ = faqs
+	qs := make([]any, 0, len(faqs))
+	for _, f := range faqs {
+		qs = append(qs, map[string]any{"@type": "Question", "name": f.Q, "acceptedAnswer": map[string]any{"@type": "Answer", "text": f.A}})
+	}
 	d.LD = ld(map[string]any{"@context": "https://schema.org", "@graph": []any{
 		map[string]any{"@type": "WebSite", "name": site, "url": d.Base},
 		map[string]any{"@type": "Organization", "name": site, "url": d.Base, "logo": d.Base + "/icons/512.png"},
+		map[string]any{"@type": "FAQPage", "mainEntity": qs},
 	}})
 	a.render(w, "index", d)
 }
 
 func (a *App) about(w http.ResponseWriter, r *http.Request) {
 	site := a.set.get("site_name")
-	d := a.pd(r, "/about", "About "+site, "What "+site+" is, why it exists, how the contact reveal works, and what it does not protect.")
+	d := a.pd(r, "/about", "About "+site, "What "+site+" is, why it exists, how the contact reveal works, and what anonymity does and does not mean.")
 	d.LD = ld(map[string]any{"@context": "https://schema.org", "@type": "AboutPage", "name": d.Title, "url": d.Canon, "description": d.Desc})
 	a.render(w, "about", d)
 }
@@ -285,16 +302,18 @@ func (a *App) sitemap(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(s.String()))
 }
 
+// Chat links (/l/) are open to link-preview crawlers and kept out of search with a noindex header instead.
+// Return links (/r/) carry a secret, so crawlers stay away from them.
 func (a *App) robots(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-	fmt.Fprintf(w, "User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /api/\nDisallow: /l/\nDisallow: /r/\n\nSitemap: %s/sitemap.xml\n", a.base(r))
+	fmt.Fprintf(w, "User-agent: *\nAllow: /\nDisallow: /app\nDisallow: /api/\nDisallow: /r/\n\nSitemap: %s/sitemap.xml\n", a.base(r))
 }
 
 func (a *App) llms(w http.ResponseWriter, r *http.Request) {
 	b, site := a.base(r), a.set.get("site_name")
 	var s strings.Builder
 	fmt.Fprintf(&s, "# %s\n\n> %s\n\nPrivate chats from a link. Guests write without an account, the owner approves each chat, every person gets a fresh temporary name per chat, and contact details are shared only when both people agree. Messages are end-to-end encrypted in the browser. Chats are deleted after 7 days at most.\n\n## Pages\n\n", site, a.set.get("tagline"))
-	fmt.Fprintf(&s, "- [About](%s/about): what it is, why it exists, what it does not protect\n- [Privacy](%s/privacy): what is stored and for how long\n- [Terms](%s/terms): the rules for using it\n- [Blog](%s/blog): practical notes on private conversations\n\n## Posts\n\n", b, b, b, b)
+	fmt.Fprintf(&s, "- [About](%s/about): what it is, why it exists, what anonymity does and does not mean\n- [Privacy](%s/privacy): what is stored, why, and for how long\n- [Terms](%s/terms): the terms for using it\n- [Blog](%s/blog): practical notes on private conversations\n\n## Posts\n\n", b, b, b, b)
 	for _, p := range posts {
 		fmt.Fprintf(&s, "- [%s](%s/blog/%s): %s\n", p.Title, b, p.Slug, p.Desc)
 	}
@@ -314,168 +333,16 @@ func (a *App) llmsFull(w http.ResponseWriter, r *http.Request) {
 	w.Write([]byte(s.String()))
 }
 
+// The app is light only, so the install splash and browser chrome use the same light colour as the pages.
 func (a *App) manifest(w http.ResponseWriter, r *http.Request) {
 	site := a.set.get("site_name")
 	w.Header().Set("Content-Type", "application/manifest+json")
+	w.Header().Set("Cache-Control", "public, max-age=3600")
 	json.NewEncoder(w).Encode(map[string]any{"name": site, "short_name": site, "description": a.set.get("tagline"), "start_url": "/app", "scope": "/", "display": "standalone",
-		"background_color": "#0B1220", "theme_color": "#0B1220",
+		"background_color": "#F5F8FD", "theme_color": "#F5F8FD",
 		"icons": []any{
-			map[string]any{"src": "/icons/192.png", "sizes": "192x192", "type": "image/png"},
-			map[string]any{"src": "/icons/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable"},
+			map[string]any{"src": "/icons/192.png", "sizes": "192x192", "type": "image/png", "purpose": "any"},
+			map[string]any{"src": "/icons/512.png", "sizes": "512x512", "type": "image/png", "purpose": "any"},
+			map[string]any{"src": "/icons/512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable"},
 		}})
-}
-
-// ---------- brand assets: the symbol is drawn in code so the icons and share image always match the logo ----------
-
-const faviconSVG = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="15" fill="#0B1220"/><g transform="translate(6 16.8) scale(.52)"><path fill="#2563FF" fill-rule="evenodd" d="M28 4a26 26 0 1 0 0 52 26 26 0 0 0 0-52zm0 14a12 12 0 1 1 0 24 12 12 0 0 1 0-24z"/><path fill="#2563FF" d="M36 48l16 10-6-16z"/><path fill="#fff" fill-rule="evenodd" d="M70 4A26 26 0 0 0 44 30 26 26 0 0 0 70 56H96V30A26 26 0 0 0 70 4zM70 17a11 11 0 1 0 0 22 11 11 0 0 0 0-22z"/><rect x="64" y="22" width="12" height="9" rx="4.5" fill="#fff"/><path fill="#fff" d="M65 30h5l-5 6z"/></g></svg>`
-
-func (a *App) favicon(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "image/svg+xml")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write([]byte(faviconSVG))
-}
-
-var (
-	cNavy  = color.RGBA{0x0B, 0x12, 0x20, 255}
-	cBlue  = color.RGBA{0x25, 0x63, 0xFF, 255}
-	cWhite = color.RGBA{255, 255, 255, 255}
-	cSlate = color.RGBA{0x16, 0x23, 0x38, 255}
-	imgs   sync.Map
-)
-
-func rrect(img *image.RGBA, x0, y0, x1, y1, r int, c color.RGBA) {
-	for y := y0; y < y1; y++ {
-		for x := x0; x < x1; x++ {
-			dx, dy := 0, 0
-			if x < x0+r {
-				dx = x0 + r - x
-			} else if x >= x1-r {
-				dx = x - (x1 - r - 1)
-			}
-			if y < y0+r {
-				dy = y0 + r - y
-			} else if y >= y1-r {
-				dy = y - (y1 - r - 1)
-			}
-			if dx*dx+dy*dy <= r*r {
-				img.SetRGBA(x, y, c)
-			}
-		}
-	}
-}
-
-func blendPx(img *image.RGBA, x, y int, c color.RGBA, a float64) {
-	if !image.Pt(x, y).In(img.Bounds()) || a <= 0 {
-		return
-	}
-	d := img.RGBAAt(x, y)
-	mix := func(s, t uint8) uint8 { return uint8(float64(s)*(1-a) + float64(t)*a) }
-	img.SetRGBA(x, y, color.RGBA{mix(d.R, c.R), mix(d.G, c.G), mix(d.B, c.B), 255})
-}
-
-// glow paints a soft blue radial light.
-func glow(img *image.RGBA, cx, cy, radius int, c color.RGBA, strength float64) {
-	for y := cy - radius; y < cy+radius; y++ {
-		for x := cx - radius; x < cx+radius; x++ {
-			d := math.Hypot(float64(x-cx), float64(y-cy)) / float64(radius)
-			if d < 1 {
-				blendPx(img, x, y, c, strength*(1-d)*(1-d))
-			}
-		}
-	}
-}
-
-func tri(px, py, ax, ay, bx, by, cx, cy float64) bool {
-	d1 := (px-bx)*(ay-by) - (ax-bx)*(py-by)
-	d2 := (px-cx)*(by-cy) - (bx-cx)*(py-cy)
-	d3 := (px-ax)*(cy-ay) - (cx-ax)*(py-ay)
-	return !((d1 < 0 || d2 < 0 || d3 < 0) && (d1 > 0 || d2 > 0 || d3 > 0))
-}
-
-func roundRectHit(px, py, x0, y0, x1, y1, r float64) bool {
-	if px < x0 || px > x1 || py < y0 || py > y1 {
-		return false
-	}
-	cx, cy := math.Max(x0+r, math.Min(px, x1-r)), math.Max(y0+r, math.Min(py, y1-r))
-	return math.Hypot(px-cx, py-cy) <= r
-}
-
-// markAt returns the colour of the brand symbol at a point on its 100 x 60 design grid.
-// Two overlapping chat bubbles: a blue ring on the left, a solid bubble with a small speech bubble cut-out on the right.
-func markAt(x, y float64, right color.RGBA) (color.RGBA, bool) {
-	if math.Hypot(x-70, y-30) <= 26 || (x >= 70 && x <= 96 && y >= 30 && y <= 56) {
-		if math.Hypot(x-70, y-28) > 11 || roundRectHit(x, y, 64, 22, 76, 31, 4.5) || tri(x, y, 65, 30, 65, 36, 70, 30) {
-			return right, true
-		}
-	}
-	d := math.Hypot(x-28, y-30)
-	if (d >= 12 && d <= 26) || tri(x, y, 36, 48, 52, 58, 46, 42) {
-		return cBlue, true
-	}
-	return color.RGBA{}, false
-}
-
-func paintMark(img *image.RGBA, ox, oy int, s float64, right color.RGBA) {
-	w, h := int(100*s)+1, int(60*s)+1
-	for py := 0; py < h; py++ {
-		for px := 0; px < w; px++ {
-			var r, g, b, n float64
-			for sy := 0; sy < 2; sy++ {
-				for sx := 0; sx < 2; sx++ {
-					x, y := (float64(px)+0.25+0.5*float64(sx))/s, (float64(py)+0.25+0.5*float64(sy))/s
-					if c, ok := markAt(x, y, right); ok {
-						r, g, b, n = r+float64(c.R), g+float64(c.G), b+float64(c.B), n+1
-					}
-				}
-			}
-			if n > 0 {
-				blendPx(img, ox+px, oy+py, color.RGBA{uint8(r / n), uint8(g / n), uint8(b / n), 255}, n/4)
-			}
-		}
-	}
-}
-
-func renderPNG(key string, w, h int, draw func(*image.RGBA)) []byte {
-	if v, ok := imgs.Load(key); ok {
-		return v.([]byte)
-	}
-	img := image.NewRGBA(image.Rect(0, 0, w, h))
-	for i := 0; i < len(img.Pix); i += 4 {
-		img.Pix[i], img.Pix[i+1], img.Pix[i+2], img.Pix[i+3] = cNavy.R, cNavy.G, cNavy.B, 255
-	}
-	draw(img)
-	var buf bytes.Buffer
-	png.Encode(&buf, img)
-	imgs.Store(key, buf.Bytes())
-	return buf.Bytes()
-}
-
-func servePNG(w http.ResponseWriter, data []byte) {
-	w.Header().Set("Content-Type", "image/png")
-	w.Header().Set("Cache-Control", "public, max-age=86400")
-	w.Write(data)
-}
-
-func (a *App) ogImage(w http.ResponseWriter, r *http.Request) {
-	servePNG(w, renderPNG("og2", 1200, 630, func(img *image.RGBA) {
-		glow(img, 1000, 140, 560, cBlue, 0.42)
-		paintMark(img, 110, 160, 5.2, cWhite)
-		rrect(img, 700, 210, 1090, 246, 18, cSlate)
-		rrect(img, 700, 278, 990, 314, 18, cSlate)
-		rrect(img, 700, 346, 880, 382, 18, cSlate)
-		rrect(img, 700, 440, 900, 496, 28, cBlue)
-	}))
-}
-
-func (a *App) icon(w http.ResponseWriter, r *http.Request) {
-	n, err := strconv.Atoi(strings.TrimSuffix(r.PathValue("size"), ".png"))
-	if err != nil || (n != 180 && n != 192 && n != 512) {
-		http.NotFound(w, r)
-		return
-	}
-	data := renderPNG("icon2"+strconv.Itoa(n), n, n, func(img *image.RGBA) {
-		s := float64(n) * 0.6 / 100
-		paintMark(img, int((float64(n)-100*s)/2), int((float64(n)-60*s)/2), s, cWhite)
-	})
-	servePNG(w, data)
 }
