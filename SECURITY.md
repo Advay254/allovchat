@@ -6,11 +6,13 @@ Please report security problems privately through [GitHub security advisories](h
 
 Include what you found, how to reproduce it, and what an attacker could do with it. I aim to reply within a week and to fix confirmed problems as quickly as I can. If you want credit, say so in your report.
 
+The same contact is published at `/.well-known/security.txt` (RFC 9116).
+
 ## Supported versions
 
 Only the latest release and `main` get fixes.
 
-## Known limits
+## Design limits
 
 These are documented design limits, not vulnerabilities:
 
@@ -19,8 +21,8 @@ These are documented design limits, not vulnerabilities:
 - The server delivers the JavaScript that does the encryption, so a compromised server could change it. The safety code in each chat helps people check that keys match.
 - Keys live in the browser's local storage.
 - Rate limits are held in memory, so they reset on restart and are not shared between instances.
-- The banned-word filter only works on chats that are not end-to-end encrypted.
+- Because messages are encrypted in the browser, the word filter runs there too. A modified client can skip it.
 
 ## Scope
 
-In scope: this repository and the code it runs. Out of scope: third-party services (Render, Aiven, Cloudflare), social engineering, and denial of service through raw traffic volume.
+In scope: this repository and the code it runs. Out of scope: third-party services (hosting, database, Cloudflare), social engineering, and denial of service through raw traffic volume.

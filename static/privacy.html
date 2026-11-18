@@ -1,26 +1,107 @@
 {{define "content"}}
-<section class="site section"><div class="prose">
-<h1 class="rise">Privacy</h1>
-<p>This page explains what {{.Site}} stores, for how long, and who can see it. It describes how the software works. If you run your own copy, you are the operator, so check that it still fits.</p>
-<h2>What is stored</h2>
-<p><b>Owner accounts.</b> A username and a hashed password. No email address or phone number is asked for.</p>
-<p><b>Guests.</b> No account. Your browser keeps a random key and token so you can come back to your chat. A hashed device marker lets an owner block a guest.</p>
-<p><b>Messages and contact details.</b> They are encrypted in your browser before they are sent, so the server stores ciphertext it cannot read. Chats that started before encryption was added are stored as readable text until they expire.</p>
-<p><b>Metadata.</b> The server can see that a chat exists, when it started, when messages were sent and how long they are, the temporary names, and the link names owners chose.</p>
-<h2>How long it is kept</h2>
-<p>A chat lasts 7 days at most, or less if the link or either person sets a shorter time. A warning shows 12 hours before deletion. Shared contact details are removed 24 hours after the reveal. The dashboard activity log, which records admin actions only, is kept for 180 days. Sign-in sessions expire on their own.</p>
-<h2>Cookies and tracking</h2>
-<p>Only the cookies needed to sign in, return to a chat and block abusers. There are no ads, no analytics and no tracking pixels. If the operator turns on the Cloudflare Turnstile human check, Cloudflare loads on sign-in and sees what any site you visit would see.</p>
-<h2>IP addresses</h2>
-<p>They are held in memory for a short time to slow down abuse, such as repeated sign-in attempts. Failed dashboard sign-ins are logged with the IP address. The hosting provider may keep its own standard logs.</p>
-<h2>Reports</h2>
-<p>When you report a chat, you choose what to send. In an encrypted chat, moderators only see the messages you attach, and the server cannot check that they are genuine. A report is removed when its chat is deleted.</p>
-<h2>Your choices</h2>
-<p>Leave deletes a chat for both people at once. Owners can delete their links and the chats on them. To have an account removed, ask the operator.</p>
-<h2>What this does not promise</h2>
-<p>Being anonymous to the other person is not the same as being untraceable. Encryption keys have no forward secrecy, so if someone gets the key from your device they could read that chat. The server also delivers the code your browser runs, so you are trusting the operator not to change it. The verification code in each chat helps you check that keys match.</p>
-<h2>Questions</h2>
-<p>Open an issue on <a href="https://github.com/Advay254/allovchat">GitHub</a>. For security problems, see the <a href="https://github.com/Advay254/allovchat/blob/main/SECURITY.md">security policy</a>.</p>
-<p class="fine">Last updated 18 November 2026.</p>
-</div></section>
+<link rel="stylesheet" href="/static/legal.css">
+<section class="site lg">
+<header class="lg-head rise">
+<p class="lg-eyebrow">Legal</p>
+<h1>Privacy notice</h1>
+<p class="lg-lead">{{.Site}} is built so that you share as little as possible. This notice explains exactly what the service handles, why, how long it stays, and the controls you have over it.</p>
+<p class="lg-meta">Effective 18 November 2026</p>
+</header>
+<ul class="lg-glance">
+<li><b>Encrypted in your browser</b><span>Messages and shared contact details are encrypted before they leave your device. We store ciphertext that we cannot read.</span></li>
+<li><b>No ads, no tracking</b><span>We do not sell personal information, show advertising or run analytics trackers.</span></li>
+<li><b>Temporary by design</b><span>Chats are deleted within 7 days. Shared contact details are removed after 24 hours.</span></li>
+<li><b>You are in control</b><span>Leave a chat, delete a link or delete your whole account whenever you choose.</span></li>
+</ul>
+<div class="lg-wrap">
+<nav class="lg-toc" aria-label="On this page"><b>On this page</b><ol>
+<li><a href="#scope">Scope</a></li><li><a href="#collect">Information we handle</a></li><li><a href="#use">How we use it</a></li><li><a href="#encryption">Encryption</a></li><li><a href="#retention">Retention</a></li><li><a href="#sharing">Sharing</a></li><li><a href="#cookies">Cookies and storage</a></li><li><a href="#controls">Your controls</a></li><li><a href="#reports">Safety reports</a></li><li><a href="#security">Security</a></li><li><a href="#children">Children</a></li><li><a href="#changes">Changes</a></li><li><a href="#contact">Contact</a></li>
+</ol></nav>
+<article class="lg-doc">
+<section id="scope"><h2>Scope</h2>
+<p>{{.Site}} lets people open a private chat from a link, without creating an account. This notice applies to the {{.Site}} website, the app, and every chat link created with it. It tells you what we handle when you use the service as a link owner or as a guest.</p>
+<p>We ask for as little as possible. We never ask for your real name, email address, phone number, contacts or precise location.</p></section>
+
+<section id="collect"><h2>Information we handle</h2>
+<h3>Account information</h3>
+<p>Link owners choose a username and a password. The password is stored only as a salted, one-way hash, never in readable form. There is no email address or phone number on an account.</p>
+<h3>Link settings</h3>
+<p>The name of each link, plus any welcome message, about text, auto-reply, quiet hours, time zone and chat length you set for it.</p>
+<h3>Chat information</h3>
+<p>The temporary name each person is given, the encrypted messages, when they were sent, whether they were read (unless privacy mode hides it), the public encryption keys of both people, and the status of the chat. Message content and contact details are encrypted before they reach us.</p>
+<h3>Contact details you reveal</h3>
+<p>When both people agree to a reveal, the details each person typed are stored encrypted and removed 24 hours later.</p>
+<h3>Safety information</h3>
+<p>When an owner blocks a guest, we store a hashed device marker so the block holds across that owner's links. When you report a chat, we receive the reason, any note you add, and the messages you choose to attach.</p>
+<h3>Technical information</h3>
+<p>To deliver the service and protect it from abuse, our servers process your IP address and basic request details. Rate limits keep IP addresses in memory for a short time. Our hosting and database providers keep standard connection logs under their own schedules.</p></section>
+
+<section id="use"><h2>How we use it</h2>
+<p>We use information to run chats and deliver messages, to sign owners in and keep accounts secure, to enforce rate limits and stop abuse, to review safety reports, and to keep the service reliable and fix faults. We do not use it for advertising, we do not build profiles, and we do not sell or rent it to anyone.</p></section>
+
+<section id="encryption"><h2>Encryption and what we can see</h2>
+<p>Messages and shared contact details are end-to-end encrypted. Your browser creates the keys, encrypts each message before sending, and the other person's browser decrypts it. Our servers only ever hold ciphertext, so we cannot read your conversations, and we cannot hand over readable messages to anyone.</p>
+<p>We can see metadata: that a chat exists, when it started and ended, when messages were sent, roughly how large they are, the temporary names, and the names owners gave their links.</p>
+<p>Your keys live in your browser. If you clear site data or switch device without your key backup, that chat cannot be opened again, and we cannot recover it for you. Each chat has a safety code you can compare with the other person to confirm that nobody sits in the middle.</p></section>
+
+<section id="retention"><h2>How long we keep information</h2>
+<div class="lg-scroll"><table class="lg-table"><thead><tr><th>Information</th><th>How long</th></tr></thead><tbody>
+<tr><td>Chats and messages</td><td>At most 7 days, or less if the link or either person sets a shorter time. A warning appears 12 hours before deletion.</td></tr>
+<tr><td>Shared contact details</td><td>Removed 24 hours after the reveal.</td></tr>
+<tr><td>Safety reports</td><td>Removed together with the chat they refer to.</td></tr>
+<tr><td>Accounts and links</td><td>Until you delete them.</td></tr>
+<tr><td>Blocked guests</td><td>Until you clear the list or delete your account.</td></tr>
+<tr><td>Sign-in sessions</td><td>Expire automatically after 30 days, or when you log out.</td></tr>
+<tr><td>Provider logs</td><td>Kept by our hosting and database providers under their own schedules.</td></tr>
+</tbody></table></div></section>
+
+<section id="sharing"><h2>Who we share information with</h2>
+<p>Infrastructure providers host the service and its database, and they process data on our behalf only to run it. When the human check is switched on, Cloudflare Turnstile loads on sign-in and registration to stop automated abuse, and sees what any site would see when you visit it.</p>
+<p>We disclose information if the law requires it or to protect someone from serious harm. What we hold is limited, and the content of chats is encrypted, so we have no readable messages to disclose.</p></section>
+
+<section id="cookies"><h2>Cookies and local storage</h2>
+<p>We use only what the service needs to work. There are no advertising cookies and no analytics cookies.</p>
+<ul>
+<li><b>Sign-in cookie.</b> Keeps owners signed in. It is secure and not readable by scripts.</li>
+<li><b>Chat cookies.</b> Let a guest return to their chat, and let an owner block a guest.</li>
+<li><b>Local storage.</b> Holds your encryption keys and your preferences, such as privacy mode by default, alerts and haptics. It stays on your device.</li>
+</ul>
+<p>Because these are essential to the service, no cookie banner is needed.</p></section>
+
+<section id="controls"><h2>Your controls</h2>
+<ul>
+<li><b>Leave a chat.</b> The Leave button deletes the chat for both people immediately.</li>
+<li><b>End a chat sooner.</b> Either person can shorten a chat. Nobody can extend it.</li>
+<li><b>Privacy mode.</b> Hides your typing, read receipts and online status, and hides the other person's from you.</li>
+<li><b>Block and report.</b> Block a guest in one tap, or report a chat to our team.</li>
+<li><b>Delete a link.</b> Removes the link and every chat on it.</li>
+</ul>
+<h3>Delete your account</h3>
+<p>Open Settings and choose Delete account. You confirm twice, then enter your password and type DELETE. Deletion is immediate and permanent. It removes your account, your sign-in sessions, your block list, every link you made and every chat on those links, for both people. Chats you saved to your account from other people's links are removed from it, and the other person's copy follows its normal schedule. Nobody, including us, can bring a deleted account back.</p></section>
+
+<section id="reports"><h2>Safety reports</h2>
+<p>Sending a report is your choice. We receive the reason, your note, and only the messages you attach. In an encrypted chat we cannot see anything you do not send. We use reports to protect people and to enforce our <a href="/terms">terms</a>, and a report is deleted with its chat.</p></section>
+
+<section id="security"><h2>How we protect information</h2>
+<ul>
+<li>All traffic uses HTTPS.</li>
+<li>Messages and contact details are end-to-end encrypted.</li>
+<li>Passwords are salted and hashed, and sign-in sessions can be revoked on the server.</li>
+<li>A strict content security policy and modern security headers protect every page.</li>
+<li>Rate limits and a human check protect sign-in and chat creation from abuse.</li>
+<li>The code is open source, so anyone can review it.</li>
+</ul>
+<p>To report a vulnerability, follow the <a href="https://github.com/Advay254/allovchat/blob/main/SECURITY.md">security policy</a>.</p></section>
+
+<section id="children"><h2>Children</h2>
+<p>{{.Site}} is for adults. People under 18 may not use it. If we learn that an account or chat involves someone under 18, we close it.</p></section>
+
+<section id="changes"><h2>Changes to this notice</h2>
+<p>When we change this notice, we update the date at the top. If a change affects how your information is handled, we announce it on the site.</p></section>
+
+<section id="contact"><h2>Contact</h2>
+<p>Questions about privacy are welcome. Open an issue on <a href="https://github.com/Advay254/allovchat">GitHub</a>.</p></section>
+</article>
+</div>
+</section>
 {{end}}

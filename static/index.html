@@ -1,52 +1,75 @@
 {{define "content"}}
-<section class="site hero">
-<div>
-<h1 class="rise">Meet without revealing. <span class="accent">Connect without pressure.</span></h1>
-<p class="lede rise" style="--i:1">Chat first. Share later. A temporary space for two people to get to know each other without immediately exposing who they are.</p>
-<div class="cta-row rise" style="--i:2"><a class="btn" href="/app">Create your link</a><a class="btn ghost" href="#how">How it works</a></div>
-<div class="feats rise" style="--i:3">
-<div class="feat"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg><span><b>No sign-up</b>Guests just open your link</span></div>
-<div class="feat"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><span><b>You're in control</b>Share only when you both agree</span></div>
-<div class="feat"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><span><b>Gone in 7 days</b>Every chat ends on its own</span></div>
-</div>
-</div>
-<div class="hero-visual rise" style="--i:2" aria-hidden="true">
-<div class="preview">
-<div class="pv-top"><span class="av" style="background:#4A5E94">Q</span><div><b>Quiet Fox</b><small>Online</small></div><span class="left"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg>6d 23h left</span></div>
-<div class="mock">
-<div class="mrow them"><div class="m them end">Hi, is the bike still for sale?</div></div>
-<div class="mrow me"><div class="m me end">Yes, happy to answer anything.</div></div>
-<div class="mrow them"><div class="m them end">Great. Can we move to WhatsApp?</div></div>
-<div class="reveal-card"><b>You both agreed</b><span>@maya.rides</span><small>Shown once, gone in 24 hours</small></div>
-</div>
-</div>
-</div>
+<link rel="stylesheet" href="/static/landing.css">
+<script src="/static/demo.js" defer></script>
+<section class="site lp-hero">
+<span class="lp-pill rise"><i></i>Open source and end-to-end encrypted</span>
+<h1 class="rise" style="--i:1">Meet without revealing. <span class="accent">Connect without pressure.</span></h1>
+<p class="lede rise" style="--i:2">Share one private link. People write to you without an account, you decide who gets in, and nobody shares a name, number or profile until you both choose to.</p>
+<div class="cta-row rise" style="--i:3"><a class="btn" href="/app">Create your link</a><a class="btn ghost" href="#demo">Watch how it works</a></div>
+<p class="lp-micro rise" style="--i:4">Free. No sign-up for guests. Every chat deletes itself within 7 days.</p>
 </section>
-<section class="site">
+
+<section class="site lp-sec" id="demo" aria-labelledby="demo-h">
+<div class="lp-h"><h2 id="demo-h">See it in action</h2><p>Four short walkthroughs of the whole experience, from sharing a link to swapping contact details.</p></div>
+<div class="lp-stage" id="lp-demo">
+<div class="lp-tabs" role="tablist" aria-label="Demos">
+<button class="lp-tab" role="tab" aria-selected="true" type="button">Share a link<span>Name it, post it, accept requests.</span></button>
+<button class="lp-tab" role="tab" aria-selected="false" tabindex="-1" type="button">Chat anonymously<span>Fresh names and encrypted messages.</span></button>
+<button class="lp-tab" role="tab" aria-selected="false" tabindex="-1" type="button">Reveal together<span>Contact details only when you both agree.</span></button>
+<button class="lp-tab" role="tab" aria-selected="false" tabindex="-1" type="button">Privacy mode<span>Hide your activity, and theirs hides from you.</span></button>
+</div>
+<div class="lp-side">
+<div class="lp-phone" aria-hidden="true"><div class="lp-screen"><div class="lp-top"><span class="lp-av">Y</span><div><b class="lp-name">Your links</b><span class="lp-sub">Dashboard</span></div></div><div class="lp-body"></div></div></div>
+<p class="lp-cap">Name a link, share it anywhere, and accept each request before a chat starts.</p>
+<button class="lp-pause" type="button" aria-pressed="false">Pause demo</button>
+</div>
+</div>
+<noscript><p class="fine center">The demos need JavaScript. In short: you share a link, guests write without an account, you accept or block each request, and contact details appear only when both people agree.</p></noscript>
+</section>
+
+<section class="site lp-sec">
 <div class="trust rv">
 <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M8 8l-4 4 4 4M16 8l4 4-4 4M13.5 5l-3 14"/></svg><span><b>Open source</b>MIT licensed</span></div>
-<div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M3.5 12h17M12 3.5c2.5 2.5 3.5 5.5 3.5 8.5s-1 6-3.5 8.5c-2.5-2.5-3.5-5.5-3.5-8.5s1-6 3.5-8.5z"/></svg><span><b>Self-hosted</b>Run it anywhere</span></div>
+<div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><span><b>Encrypted</b>Readable only by you two</span></div>
 <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg><span><b>Fresh names</b>New alias every chat</span></div>
 <div><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 21V4M5 4h11l-2 4 2 4H5"/></svg><span><b>Safety tools</b>Block, report, leave</span></div>
 </div>
 </section>
-<section class="site section" id="how">
-<h2 class="rv">How it works</h2>
+
+<section class="site lp-sec" id="how">
+<div class="lp-h"><h2 class="rv">How it works</h2><p class="rv">Three steps, and you stay in control of every one.</p></div>
 <ol class="steps">
-<li class="rv"><span class="n">1</span><div><h3>Make a link</h3><p>Name it after the post or group it's for. Choose how long chats last, up to 7 days, and pause it whenever you like.</p></div></li>
+<li class="rv"><span class="n">1</span><div><h3>Make a link</h3><p>Name it after the post or group it is for. Choose how long chats last, up to 7 days, and pause it whenever you like.</p></div></li>
 <li class="rv"><span class="n">2</span><div><h3>Share it anywhere</h3><p>Guests type a message and send it. No sign-up. You see a request, and nothing reaches you until you accept it.</p></div></li>
 <li class="rv"><span class="n">3</span><div><h3>Talk, then decide</h3><p>Chat as long as you like. If you both want to move to WhatsApp or anywhere else, you each agree and the details appear once.</p></div></li>
 </ol>
 </section>
-<section class="site section">
-<h2 class="rv">Your identity. Your choice.</h2>
-<ul class="checks">
-<li class="rv">You approve every chat before it starts, and each person gets a fresh temporary name.</li>
-<li class="rv">Leave any time with one tap. The chat disappears for both of you.</li>
-<li class="rv">Turn on privacy mode to hide your typing, read receipts and online status. It works both ways, so you won't see theirs either.</li>
-<li class="rv">Contact details show only after you both say yes, and vanish after 24 hours.</li>
-<li class="rv">Messages are end-to-end encrypted in your browser, and every chat is deleted within 7 days.</li>
-</ul>
+
+<section class="site lp-sec">
+<div class="lp-h"><h2 class="rv">Your identity. Your choice.</h2><p class="rv">Every part of AllovChat is built around one idea: you decide what other people learn about you.</p></div>
+<div class="lp-grid">
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg><h3>You approve every chat</h3><p>Each conversation starts as a request. Accept it, or block the guest in one tap.</p></article>
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="8" r="3.5"/><path d="M5 20c0-3.5 3-6 7-6s7 2.5 7 6"/></svg><h3>A fresh name every time</h3><p>Each person gets a new temporary name in every chat, so nothing links one conversation to the next.</p></article>
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="5" y="11" width="14" height="9" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg><h3>End-to-end encrypted</h3><p>Messages and shared contacts are encrypted in your browser. Our servers store ciphertext they cannot read, and a safety code lets you verify the keys.</p></article>
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3l18 18M10.6 6.1A9.8 9.8 0 0 1 12 6c5 0 8.5 4 9.5 6a14 14 0 0 1-2.6 3.4M6.5 7.6A14 14 0 0 0 2.5 12c1 2 4.5 6 9.5 6 1.4 0 2.7-.3 3.8-.8"/></svg><h3>Privacy mode, both ways</h3><p>Hide your typing, read receipts and online status. It hides theirs from you too, so it is fair even if they have not turned it on.</p></article>
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M14 4h6v16h-6M10 8l-4 4 4 4M6 12h10"/></svg><h3>Leave in one tap</h3><p>The Leave button deletes the chat for both people at once. A guest lands on a neutral page, so nothing stays on screen.</p></article>
+<article class="lp-feat rv"><svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></svg><h3>Temporary by design</h3><p>Chats last at most 7 days, with a warning 12 hours before deletion. Either person can end one sooner, and nobody can extend it.</p></article>
+</div>
 </section>
-<section class="site section tight"><div class="band rv"><h2>Make your first link in under a minute.</h2><a class="btn" href="/app">Create your link</a></div></section>
+
+<section class="site lp-sec">
+<div class="lp-h"><h2 class="rv">Made for the first message</h2><p class="rv">Practical guides for the moments a private link helps most.</p></div>
+<div class="lp-grid">
+<a class="lp-feat rv" href="/blog/ask-a-sensitive-question-without-sharing-your-profile"><h3>Asking a sensitive question</h3><p>Reply to a group post without putting your real profile in front of everyone.</p><span class="more">Read the guide</span></a>
+<a class="lp-feat rv" href="/blog/why-mutual-reveal-beats-a-dm-request"><h3>Moving to WhatsApp</h3><p>Why a mutual reveal takes the pressure off both people.</p><span class="more">Read the guide</span></a>
+<a class="lp-feat rv" href="/blog/keep-your-chat-link-from-filling-with-spam"><h3>Keeping a public link tidy</h3><p>Five habits that keep spam and bored strangers out of your inbox.</p><span class="more">Read the guide</span></a>
+</div>
+</section>
+
+<section class="site lp-sec" id="faq">
+<div class="lp-h"><h2 class="rv">Questions, answered</h2></div>
+<div class="lp-faq">{{range .FAQ}}<details class="lp-q rv"><summary>{{.Q}}</summary><p>{{.A}}</p></details>{{end}}</div>
+</section>
+
+<section class="site lp-end"><div class="band rv"><h2>Make your first link in under a minute.</h2><a class="btn" href="/app">Create your link</a></div></section>
 {{end}}

@@ -1,21 +1,79 @@
 {{define "content"}}
-<section class="site section"><div class="prose">
-<h1 class="rise">Terms of use</h1>
-<p>Plain-language rules for using {{.Site}}. By using the service you agree to them.</p>
-<h2>Using the service</h2>
-<p>Use it lawfully and be decent. Do not harass or threaten people, run scams, send spam, send sexual content to someone who has not agreed to it, or share anything that sexualises minors. Do not try to break, overload or get around the service.</p>
-<h2>Links and chats</h2>
-<p>Owners are responsible for the links they post and the chats they accept. Everyone is responsible for what they write. Chats are temporary, and a deleted chat cannot be restored.</p>
-<h2>Moderation</h2>
-<p>The operator can pause links, close or delete chats, and disable accounts to deal with abuse or reports. Encrypted chats cannot be read by the operator, so decisions rely on reports, what reporters choose to attach, and metadata.</p>
-<h2>Sharing contact details</h2>
-<p>The service cannot verify who anyone is or what they share. Only reveal contact details to someone you trust.</p>
-<h2>No guarantees</h2>
-<p>The service is provided as it is. It may be unavailable, and chats may be lost. To the extent the law allows, the operator is not liable for losses from using it.</p>
-<h2>Open source</h2>
-<p>The code is free to use under the MIT license. These terms cover the hosted service.</p>
-<h2>Changes</h2>
-<p>These terms may change. The date below shows the latest update. See also the <a href="/privacy">privacy notice</a>.</p>
-<p class="fine">Last updated 18 November 2026.</p>
-</div></section>
+<link rel="stylesheet" href="/static/legal.css">
+<section class="site lg">
+<header class="lg-head rise">
+<p class="lg-eyebrow">Legal</p>
+<h1>Terms of use</h1>
+<p class="lg-lead">These terms set out how {{.Site}} works, what we expect from everyone who uses it, and what you can expect from us. By using the service you agree to them.</p>
+<p class="lg-meta">Effective 18 November 2026</p>
+</header>
+<ul class="lg-glance">
+<li><b>Be decent</b><span>No harassment, threats, scams, spam or sexual content that the other person has not agreed to.</span></li>
+<li><b>Adults only</b><span>You must be 18 or older to use {{.Site}}.</span></li>
+<li><b>Chats are temporary</b><span>Every chat is deleted within 7 days and cannot be restored.</span></li>
+<li><b>You stay in control</b><span>Block, report, leave or delete your account at any time.</span></li>
+</ul>
+<div class="lg-wrap">
+<nav class="lg-toc" aria-label="On this page"><b>On this page</b><ol>
+<li><a href="#agreement">Agreement</a></li><li><a href="#eligibility">Who can use it</a></li><li><a href="#accounts">Accounts</a></li><li><a href="#chats">Links and chats</a></li><li><a href="#conduct">Acceptable use</a></li><li><a href="#content">Your content</a></li><li><a href="#reveal">Sharing contact details</a></li><li><a href="#enforcement">Reports and enforcement</a></li><li><a href="#temporary">Temporary by design</a></li><li><a href="#availability">Availability</a></li><li><a href="#disclaimers">Disclaimers</a></li><li><a href="#liability">Liability</a></li><li><a href="#ending">Ending your use</a></li><li><a href="#changes">Changes</a></li><li><a href="#contact">Contact</a></li>
+</ol></nav>
+<article class="lg-doc">
+<section id="agreement"><h2>Agreement</h2>
+<p>These terms are a binding agreement between you and {{.Site}}. They apply whether you use the service as a link owner or as a guest. Please read them together with the <a href="/privacy">privacy notice</a>, which explains how information is handled. If you do not agree, do not use the service.</p></section>
+
+<section id="eligibility"><h2>Who can use {{.Site}}</h2>
+<p>You must be at least 18 years old, and able to enter a binding agreement where you live. {{.Site}} is not for children. We close any account or chat that involves someone under 18.</p></section>
+
+<section id="accounts"><h2>Accounts</h2>
+<p>Guests need no account. Link owners create one with a username and password. You are responsible for keeping your password private and for everything that happens under your account. Choose a strong, unique password, and tell us promptly if you believe your account was accessed without your permission. You can delete your account at any time from Settings.</p></section>
+
+<section id="chats"><h2>Links and chats</h2>
+<p>An owner creates a link and decides who may chat through it. Every chat starts as a request that the owner accepts or blocks. Each person receives a temporary name for that chat only. Owners are responsible for where they post their links and for the chats they accept. Everyone is responsible for what they write.</p></section>
+
+<section id="conduct"><h2>Acceptable use</h2>
+<p>You agree not to use {{.Site}} to:</p>
+<ul>
+<li>harass, threaten, intimidate, stalk or abuse anyone;</li>
+<li>run scams, ask for money under false pretences or commit fraud;</li>
+<li>send spam, advertising or bulk unsolicited messages;</li>
+<li>send sexual content to someone who has not agreed to receive it;</li>
+<li>share, request or promote any sexual content involving minors, which we report to the authorities;</li>
+<li>share another person's private information without their consent;</li>
+<li>impersonate a person or organisation;</li>
+<li>break the law or encourage others to do so;</li>
+<li>probe, overload, scrape or attack the service, or work around its limits and safety tools.</li>
+</ul></section>
+
+<section id="content"><h2>Your content</h2>
+<p>You own the messages and details you send. You give us only the limited permission needed to run the service: to store your encrypted content, deliver it to the other person, and delete it on schedule. Because messages are end-to-end encrypted, we cannot read them. The {{.Site}} code is open source under the MIT license, which covers the code and not your content.</p></section>
+
+<section id="reveal"><h2>Sharing contact details</h2>
+<p>The contact reveal shows details only when both people agree, once, and removes them after 24 hours. We cannot verify who anyone is or whether what they share is genuine. Share contact details only with people you trust. Once you have shared something, it is outside our control.</p></section>
+
+<section id="enforcement"><h2>Reports and enforcement</h2>
+<p>You can report any chat from inside it. We review reports and may pause links, close or delete chats, and suspend or remove accounts that break these terms or put people at risk. In an encrypted chat we act on the reason you give, the messages you choose to attach, and basic metadata. If you believe we made a mistake, tell us through the contact option below and we will look again.</p></section>
+
+<section id="temporary"><h2>Temporary by design</h2>
+<p>Chats end within 7 days, shared contact details end after 24 hours, and the Leave button deletes a chat immediately. Deleted chats cannot be restored. If something matters to you, keep your own copy.</p></section>
+
+<section id="availability"><h2>Availability and changes to the service</h2>
+<p>We work to keep {{.Site}} available and improve it continuously, which means features can change, and the service can be unavailable during maintenance or because of events outside our control.</p></section>
+
+<section id="disclaimers"><h2>Disclaimers</h2>
+<p>{{.Site}} is provided "as is" and "as available". To the fullest extent the law allows, we make no warranties of any kind, including fitness for a particular purpose, uninterrupted operation or that the service will meet your needs. We are not responsible for what other people say or do, and anonymity within a chat does not make anyone untraceable.</p></section>
+
+<section id="liability"><h2>Limitation of liability</h2>
+<p>To the fullest extent the law allows, {{.Site}} and its contributors are not liable for indirect, incidental, special or consequential damages, or for loss of data, chats or profits, arising from your use of the service. Nothing in these terms limits any liability that cannot be limited by law.</p></section>
+
+<section id="ending"><h2>Ending your use</h2>
+<p>You can stop using {{.Site}} at any time, and you can delete your account in Settings. We can suspend or end access for anyone who breaks these terms. Sections that by their nature should continue, such as the disclaimers and the limitation of liability, continue after your use ends.</p></section>
+
+<section id="changes"><h2>Changes to these terms</h2>
+<p>We may update these terms as the service evolves. The date at the top shows the latest version. If a change is significant, we announce it on the site. Using the service after a change means you accept the updated terms.</p></section>
+
+<section id="contact"><h2>Contact</h2>
+<p>Questions about these terms are welcome. Open an issue on <a href="https://github.com/Advay254/allovchat">GitHub</a>.</p></section>
+</article>
+</div>
+</section>
 {{end}}
