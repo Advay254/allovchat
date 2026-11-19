@@ -177,6 +177,7 @@ func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/l/{slug}/start", a.start)
 	a.threadRoutes(mux, "/api/l/{slug}", a.visitorThread)
 	a.featureRoutes(mux)
+	a.pushRoutes(mux)
 }
 
 func (a *App) publicInfo(w http.ResponseWriter, r *http.Request) {
@@ -393,7 +394,12 @@ func (a *App) ownerAct(to string) http.HandlerFunc {
 			return
 		}
 		ctx := r.Context()
-		a.exec(ctx, "thread status", `UPDATE threads SET status=$2::text WHERE id=$1 AND ($2::text='blocked' OR status='pending')`, tid, to)
+		ct, serr := a.db.Exec(ctx, `UPDATE threads SET status=$2::text WHERE id=$1 AND ($2::text='blocked' OR status='pending')`, tid, to)
+		if serr != nil {
+			logErr("thread status", serr)
+		} else if to == "open" && ct.RowsAffected() > 0 {
+			a.notify(tid, "v", "accepted")
+		}
 		if to == "blocked" {
 			a.exec(ctx, "block guest", `INSERT INTO blocks(owner_id, vid_hash) SELECT l.owner_id, t.vid_hash FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1 AND t.vid_hash<>'' ON CONFLICT DO NOTHING`, tid)
 		}
@@ -594,6 +600,7 @@ func (a *App) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setCookie(w, "v_"+slug, tok, 7*86400, false)
+	a.notify(tid, "o", "request")
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
@@ -766,6 +773,11 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 	}
 	a.exec(ctx, "touch thread", `UPDATE threads SET last_at=now() WHERE id=$1`, tid)
 	a.hub.pub(tid, map[string]any{"t": "msg", "id": id, "side": side, "body": b, "ts": ts, "cid": cid})
+	to := "o"
+	if side == "o" {
+		to = "v"
+	}
+	a.notify(tid, to, "message")
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
@@ -862,6 +874,17 @@ func (a *App) reveal(w http.ResponseWriter, r *http.Request, tid int64, side str
 	if ct.RowsAffected() == 0 && in.Agree {
 		fail(w, 409, "Reveal isn't available right now")
 		return
+	}
+	if in.Agree {
+		// The reveal has just completed if its timestamp is brand new. The other person agreed earlier, so tell them.
+		var fresh bool
+		if a.db.QueryRow(ctx, `SELECT revealed_at > now() - interval '5 seconds' FROM threads WHERE id=$1 AND revealed_at IS NOT NULL`, tid).Scan(&fresh) == nil && fresh {
+			to := "o"
+			if side == "o" {
+				to = "v"
+			}
+			a.notify(tid, to, "reveal")
+		}
 	}
 	a.hub.pub(tid, map[string]any{"t": "reveal"})
 	jsonOut(w, 200, map[string]any{"ok": true})
