@@ -54,7 +54,14 @@ CREATE INDEX IF NOT EXISTS messages_unread ON messages(thread_id, side) WHERE re
 CREATE INDEX IF NOT EXISTS messages_created ON messages(created_at);
 CREATE UNIQUE INDEX IF NOT EXISTS reports_cid ON reports(thread_id, cid) WHERE cid IS NOT NULL;
 CREATE INDEX IF NOT EXISTS reports_open ON reports(resolved, id DESC);
-CREATE INDEX IF NOT EXISTS sessions_exp ON sessions(expires_at);`
+CREATE INDEX IF NOT EXISTS sessions_exp ON sessions(expires_at);
+CREATE TABLE IF NOT EXISTS push_keys(id INT PRIMARY KEY CHECK (id=1), pub TEXT NOT NULL, priv TEXT NOT NULL, created_at TIMESTAMPTZ NOT NULL DEFAULT now());
+CREATE TABLE IF NOT EXISTS push_subs(id BIGSERIAL PRIMARY KEY, endpoint TEXT NOT NULL, p256dh TEXT NOT NULL, auth TEXT NOT NULL, owner_id BIGINT REFERENCES owners(id) ON DELETE CASCADE, thread_id BIGINT REFERENCES threads(id) ON DELETE CASCADE, fails INT NOT NULL DEFAULT 0, last_ok TIMESTAMPTZ, created_at TIMESTAMPTZ NOT NULL DEFAULT now(), CHECK ((owner_id IS NULL) <> (thread_id IS NULL)));
+CREATE UNIQUE INDEX IF NOT EXISTS push_subs_owner ON push_subs(endpoint, owner_id) WHERE owner_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS push_subs_thread ON push_subs(endpoint, thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS push_subs_owner_id ON push_subs(owner_id) WHERE owner_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS push_subs_thread_id ON push_subs(thread_id) WHERE thread_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS push_subs_endpoint ON push_subs(endpoint);`
 
 func (a *App) migrate(ctx context.Context) error {
 	for _, s := range strings.Split(schema, ";") {
