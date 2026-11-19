@@ -13,7 +13,7 @@ import (
 	"time"
 )
 
-const siteUpdated = "2026-11-18"
+const siteUpdated = "2026-11-19"
 
 type post struct {
 	Slug, Title, Desc, Date string
@@ -114,12 +114,13 @@ var faqs = []qa{
 	{"What if someone is abusive or sends spam?", "You approve every chat before it starts. You can block a guest in one tap, report a chat to our team, or press Leave to delete the chat for both people at once."},
 	{"Does privacy mode hide things from me too?", "Yes. Privacy mode hides your typing, read receipts and online status, and it hides theirs from you as well. That keeps things fair, even if the other person has not turned it on."},
 	{"Is AllovChat free and open source?", "Yes. The code is open source under the MIT license. You can read it, run your own copy or contribute on GitHub."},
+	{"Can I get notifications?", "Yes, if you want them. Turn them on from Settings or inside a chat, and nothing is asked until you tap the button. Alerts are short and generic: they say something new arrived, never who wrote or what was said. On iPhone and iPad, add the app to your Home Screen first."},
 	{"Can I delete my account?", "Yes, at any time from Settings. Deleting your account removes your links and every chat on them, and it cannot be undone."},
 }
 
 const aboutMD = `AllovChat gives you a link that opens a private chat. Post it anywhere and people can write to you without an account or seeing who you are. Every chat starts as a request that you accept or block, and every person gets a fresh temporary name for each chat. Contact details are shared only if both people agree, appear once, and disappear after 24 hours.
 
-A conversation lasts at most 7 days. Both people are warned 12 hours before it is deleted, and either person can end it sooner. Messages and shared contact details are end-to-end encrypted in the browser, so the server stores only ciphertext it cannot read. It still sees metadata such as timing and message sizes. Being anonymous to the person you are talking to is different from being untraceable.
+A conversation lasts at most 7 days. Both people are warned 12 hours before it is deleted, and either person can end it sooner. Notifications are optional and generic, and never contain names or message text. Messages and shared contact details are end-to-end encrypted in the browser, so the server stores only ciphertext it cannot read. It still sees metadata such as timing and message sizes. Being anonymous to the person you are talking to is different from being untraceable.
 
 The code is open source under the MIT license.`
 
