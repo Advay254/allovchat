@@ -36,10 +36,11 @@ type App struct {
 	rl    *Limiter
 	fails *FailLimiter
 	cache *Cache
+	push  *Pusher
 }
 
 // Paths the app already uses, which an admin slug must not collide with.
-var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true, "privacy": true, "terms": true, "app": true, "api": true, "l": true, "r": true}
+var reservedPaths = map[string]bool{"health": true, "static": true, "about": true, "blog": true, "icons": true, "privacy": true, "terms": true, "app": true, "offline": true, "api": true, "l": true, "r": true}
 
 const csp = "default-src 'self'; script-src 'self' https://challenges.cloudflare.com; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://challenges.cloudflare.com; frame-src https://challenges.cloudflare.com; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'"
 
@@ -114,6 +115,7 @@ func main() {
 		log.Fatalf("migration failed: %v", err)
 	}
 	a.loadSettings(ctx)
+	a.push = a.initPush(ctx)
 	go a.janitor(ctx)
 	srv := &http.Server{Addr: ":" + cfg.Port, Handler: a.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 120 * time.Second, MaxHeaderBytes: 1 << 16}
 	go func() {
