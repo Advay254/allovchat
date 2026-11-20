@@ -86,7 +86,6 @@ function emptyInbox(){
 }
 function notifyMaybe(ts){
   const req=ts.filter(t=>t.role==='owner'&&t.status==='pending').length,un=ts.reduce((n,t)=>n+Number(t.unread),0);
-  if(last&&document.hidden&&'Notification' in window&&Notification.permission==='granted'&&localStorage.getItem('alerts')!=='0'&&(req>last.req||un>last.un)){new Notification(pub.name,{body:req>last.req?'You have a new chat request':'You have a new message'})}
   last={req,un};setBadge(req+un);
 }
 // Chat previews are decrypted here, in the browser. Derived keys are remembered so a refresh doesn't redo the maths.
@@ -239,19 +238,17 @@ async function loadHome(){
 async function loadSettings(){
   const box=$('settings');box.textContent='';box.classList.add('stag');
   const row=(title,sub,right)=>{const r=el('div','row-item static'),m=el('div','grow');m.append(el('b',null,title));if(sub)m.append(el('div','fine',sub));r.append(m);if(right)r.append(right);box.append(r);return r};
-  const alertsOn=()=>'Notification' in window&&Notification.permission==='granted'&&localStorage.getItem('alerts')!=='0';
-  row('Browser alerts','New requests and messages while a tab is open',switchEl(alertsOn(),async v=>{
-    if(!v){localStorage.setItem('alerts','0');return true}
-    if(!('Notification' in window)){toast('Alerts are not supported in this browser');return false}
-    const p=await Notification.requestPermission();
-    if(p!=='granted'){toast('Alerts are blocked in your browser settings');return false}
-    localStorage.setItem('alerts','1');return true},'Browser alerts'));
+  const scope={kind:'owner'},ps=await push.status(scope);
+  const psub={unsupported:"This browser can't show notifications",install:'On iPhone and iPad, add this app to your Home Screen first, then turn this on from there',blocked:'Blocked in your browser settings. Allow notifications for this site to turn them on',on:'You hear about new requests, messages and shared contacts. Alerts never show names or message text',off:'Get a short alert about new requests and messages when the app is closed'}[ps];
+  row('Notifications',psub,['unsupported','install','blocked'].includes(ps)?null:switchEl(ps==='on',async v=>{
+    try{if(v){await push.enable(scope);toast('Notifications are on')}else await push.disable(scope);return true}
+    catch(e){toast(e.message);return false}},'Notifications'));
   row('Privacy mode by default','Hide typing, read receipts and online status in new chats you open',switchEl(localStorage.getItem('privacy')==='1',v=>{localStorage.setItem('privacy',v?'1':'0');return true},'Privacy mode by default'));
   row('Haptics','Short vibrations on phones that support them',switchEl(localStorage.getItem('haptics')!=='0',v=>{localStorage.setItem('haptics',v?'1':'0');if(v)haptic('success');return true},'Haptics'));
   let n=0;try{n=(await api('/api/blocks')).count}catch(e){}
   const bl=el('button','btn soft sm','Clear');bl.onclick=()=>confirmSheet('Clear blocked guests?','They will be able to start chats with you again.','Clear all',async()=>{await api('/api/blocks/clear',{});loadSettings()});
   row('Blocked guests',n?n+(n===1?' person':' people'):'Nobody blocked',n?bl:null);
-  const so=el('button','btn soft sm','Log out');so.onclick=async()=>{await api('/api/logout',{});location.reload()};
+  const so=el('button','btn soft sm','Log out');so.onclick=async()=>{await push.disable({kind:'owner'}).catch(()=>{});await api('/api/logout',{});location.reload()};
   row('Signed in as '+me,null,so);
   stagger(box);
 }
@@ -261,7 +258,19 @@ async function boot(){
   if(pub.announcement){$('banner').textContent=pub.announcement;$('banner').hidden=false}
   $('switch').hidden=!pub.registration_open;
   try{me=(await api('/api/me')).username;$('shell').hidden=false;buildTabs();placeholder();
-    $('threads').append(skel(3));loadHome();loadChats();poll()}
+    $('threads').append(skel(3));loadHome();loadChats();poll();push.sync({kind:'owner'})}
   catch(e){$('auth').hidden=false}
 }
+// After the first chat you accept, offer alerts once. The prompt only appears if they tap the button.
+window.addEventListener('chat:accepted',async()=>{
+  if(localStorage.getItem('push_asked')||!(await push.canAsk({kind:'owner'})))return;
+  localStorage.setItem('push_asked','1');
+  sheet('Want a nudge when someone writes?',(box,close)=>{
+    const row=el('div','row'),no=el('button','btn soft','Not now'),yes=el('button','btn','Turn on notifications');
+    no.onclick=close;
+    yes.onclick=async()=>{try{await push.enable({kind:'owner'});toast('Notifications are on');close()}catch(e){toast(e.message)}};
+    row.append(no,yes);box.append(el('p',null,'Get a short alert about new requests and messages, even when allovchat is closed. Alerts never show names or message text.'),row);
+  });
+});
+if(navigator.serviceWorker)navigator.serviceWorker.addEventListener('message',e=>{if(e.data&&e.data.type==='push')loadChatsSoon()});
 boot();
