@@ -122,7 +122,7 @@
       if (stick) bottom(animate); else { unseen++; paintJump(); }
       return row;
     };
-    const act = async (path) => { try { await api(base + path, {}); load(); } catch (e) { toast(e.message); } };
+    const act = async (path) => { try { await api(base + path, {}); load(); return true; } catch (e) { toast(e.message); return false; } };
     // Many incoming messages in a row cause one "mark as read" request, not one each.
     const markRead = debounce(() => api(base + '/state').catch(() => {}), 700);
 
@@ -200,7 +200,7 @@
       if (st.status === 'open') foot.append(hint, st.e2e && !key ? $('p', 'fine center', "You can't send or read messages here without this chat's key.") : composer());
       else if (st.status === 'pending' && side === 'o') {
         const bar = $('div', 'bar-note'), a = $('button', 'btn sm', 'Accept'), bl = $('button', 'btn soft sm', 'Block'), r = $('div', 'row');
-        a.onclick = () => act('/accept'); bl.onclick = blockSheet; r.append(bl, a);
+        a.onclick = async () => { if (await act('/accept')) window.dispatchEvent(new Event('chat:accepted')); }; bl.onclick = blockSheet; r.append(bl, a);
         bar.append($('span', 'fine', 'New request'), r); foot.append(bar);
       } else {
         const w = $('div');
@@ -308,12 +308,26 @@
       if (evBox) box.append(evBox);
       box.append(err, row);
     });
+    // Guests on a chat link turn alerts on per chat. People who saved the chat to an account use the switch in Settings.
+    const notifySheet = () => sheet('Notifications', (box, close) => {
+      const scope = { kind: 'thread', slug: st.slug }, row = $('div', 'row'), t = $('div', 'grow'), msg = $('p', 'fine');
+      t.append($('b', null, 'Alert me about this chat'), $('div', 'fine', 'A short alert when they accept or reply, even if this tab is closed. It never shows names or message text.'));
+      push.status(scope).then((s) => {
+        if (s === 'unsupported') msg.textContent = "This browser can't show notifications.";
+        else if (s === 'install') msg.textContent = 'On iPhone and iPad, add this page to your Home Screen first, then open it from there.';
+        else if (s === 'blocked') msg.textContent = 'Notifications are blocked for this site in your browser settings.';
+        else row.append(switchEl(s === 'on', async (v) => { try { if (v) { await push.enable(scope); toast('Notifications are on'); } else await push.disable(scope); return true; } catch (e) { toast(e.message); return false; } }, 'Alert me about this chat'));
+      });
+      const done = $('button', 'btn soft wide', 'Done'); done.onclick = close;
+      row.prepend(t); box.append(row, msg, done);
+    });
     const blockSheet = () => confirmSheet('Block this guest?', "They won't be able to start new chats on any of your links.", 'Block', () => act('/block'));
     moreBtn.onclick = () => popover(moreBtn, (pop, close) => {
       menuItem(pop, close, 'flag', 'Report', reportSheet);
       menuItem(pop, close, 'eyeoff', quiet() ? 'Privacy mode: on' : 'Privacy mode', privacySheet);
       menuItem(pop, close, 'clock', 'Delete sooner', retentionSheet);
       if (st && st.e2e && key) menuItem(pop, close, 'shield', 'Verify encryption', verifySheet);
+      if (viaLink && window.push && push.supported()) menuItem(pop, close, 'bell', 'Notifications', notifySheet);
       if (side === 'o' && st && st.status !== 'blocked') menuItem(pop, close, 'block', 'Block guest', blockSheet);
       if (viaLink && st && st.resume) menuItem(pop, close, 'link', 'Copy return link', async () => {
         const ent = e2e.K.get('g:' + st.slug), frag = ent ? '#k=' + e2e.b64(te.encode(JSON.stringify(ent))) : '';
@@ -357,7 +371,6 @@
         add({ id: d.id, side: d.side, body: d.body, text: await dec(d.body, d.side), ts: d.ts }, true);
         if (d.side !== side) {
           haptic('select'); markRead();
-          if (document.hidden && window.Notification && Notification.permission === 'granted') new Notification('New message', { body: 'Open the chat to read it' });
         }
       } else if (d.t === 'typing' && d.side !== side) {
         if (quiet()) return;
