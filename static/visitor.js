@@ -11,7 +11,7 @@ function importFragment(){
   try{const ent=JSON.parse(td.decode(e2e.unb64(m[1])));if(ent&&ent.priv&&ent.pub&&ent.lpub)e2e.K.set('g:'+slug,ent)}catch(e){}
   history.replaceState(null,'',location.pathname);
 }
-function openChat(){vt(()=>{$('start').hidden=true;$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offerSave()})}
+function openChat(){vt(()=>{$('start').hidden=true;$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offers()})}
 function loadTS(key){
   // Only Turnstile's public site key is used here. The secret key stays on the server and is checked there.
   const s=document.createElement('script');s.src='https://challenges.cloudflare.com/turnstile/v0/api.js?render=explicit';s.async=true;
@@ -64,6 +64,21 @@ async function offerSave(){
   row.append(yes,no);card.append(row);
   const head=$('chatview').querySelector('.chat-head');if(head)head.after(card);
 }
+// One offer at a time: alerts first (they matter most while the request is pending), then saving the chat.
+async function offerPush(){
+  const scope={kind:'thread',slug};
+  if(localStorage.getItem('nopush_'+slug)||!(await push.canAsk(scope))){push.sync(scope);return}
+  await new Promise(done=>{
+    const card=el('div','save-card'),row=el('div','row'),yes=el('button','btn sm','Turn on notifications'),no=el('button','btn soft sm','Not now');
+    const fin=()=>{card.remove();done()};
+    card.append(el('b',null,'Want a nudge when they reply?'),el('p','fine','Get a short alert when they accept or write back, even if you close this tab. It never shows names or message text.'));
+    yes.onclick=async()=>{try{await push.enable(scope);toast('Notifications are on');fin()}catch(e){toast(e.message)}};
+    no.onclick=()=>{localStorage.setItem('nopush_'+slug,'1');fin()};
+    row.append(yes,no);card.append(row);
+    const head=$('chatview').querySelector('.chat-head');if(head)head.after(card);else done();
+  });
+}
+async function offers(){await offerPush();await offerSave()}
 async function boot(){
   importFragment();
   try{pub=await api('/api/public');document.title=pub.name+': private chat'}catch(e){}
@@ -73,7 +88,7 @@ async function boot(){
   $('welcome').textContent=info.welcome||'Send a message. They will not see who you are, and you do not need an account.';
   $('nico').innerHTML=ico(info.pub?'lock':'clock',20);
   $('ttlnote').textContent=(info.pub?'Your messages are end-to-end encrypted. ':'')+'This chat is deleted automatically after '+ttlWord(info.ttl_hours)+'. You can leave any time with one tap.';
-  try{await api('/api/l/'+slug+'/state');$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offerSave()}
+  try{await api('/api/l/'+slug+'/state');$('chatview').hidden=false;document.body.classList.add('chat-open');mountChat($('chatview'),'/api/l/'+slug,'v',gone);offers()}
   catch(e){$('start').hidden=false;stagger(document.querySelector('.intro-in'));if(pub.turnstile_site){tsKey=pub.turnstile_site;loadTS(tsKey)}}
 }
 boot();
