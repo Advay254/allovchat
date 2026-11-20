@@ -16,6 +16,7 @@ It's open source (MIT), written in Go, and stores everything in Postgres.
 - **Easy exits.** A Leave button ends a chat for both people instantly. Either person can also shorten how long a chat lasts.
 - **Privacy mode.** Hide typing indicators, read receipts and online status.
 - **Optional accounts.** Guests don't need one. If a guest wants to keep a chat, they can save it to an account.
+- **Optional notifications.** Web Push alerts for new requests, messages and shared contacts. They are generic and never contain names or message text, and nothing asks for permission until you tap "Turn on notifications".
 - **A dashboard for you.** Stats, links, chats, and a separate admin area at a path you choose.
 
 ## How the encryption works
@@ -59,8 +60,19 @@ It needs a normal always-on server (a VM, Docker host, Render, Railway, Fly.io).
 | `PORT` | no | Defaults to `8080` |
 | `TRUSTED_PROXY_HOPS` | no | How many proxies sit in front of the app. Defaults to `1` |
 | `DB_MAX_CONNS` | no | Database connections to open, 1 to 20. Defaults to `6`. Keep it low on small databases |
+| `VAPID_PUBLIC_KEY`, `VAPID_PRIVATE_KEY` | no | Web Push keys. Set both or neither. If neither is set, a pair is generated on first start and stored in the database |
+| `VAPID_SUBJECT` | no | `mailto:` or `https://` contact for push services. Defaults to `BASE_URL` |
+| `PUSH_ALLOWED_HOSTS` | no | Extra push hosts to accept, comma separated. Chrome, Firefox, Safari and Edge are built in |
 
 Everything else (site name, tagline, sign-ups, maintenance mode, limits, banned words, Cloudflare Turnstile keys) is changed in the admin dashboard.
+
+## Notifications
+
+Web Push works in Chrome, Edge, Firefox and Safari. On iPhone and iPad the app has to be added to the Home Screen first. Alerts contain only a kind ("new message"), never names or text. Someone who already has the chat open gets no alert, an owner's quiet hours are respected, and a burst of messages becomes one alert. The server only sends to the push services of the major browsers (plus any in `PUSH_ALLOWED_HOSTS`) and refuses private addresses.
+
+Notifications are not available inside a native Android app shell, so on Android people who want alerts install the web app from the browser.
+
+If you run more than one instance, note that alert batching is kept in memory per instance.
 
 ## Health check
 
