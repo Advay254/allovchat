@@ -5,7 +5,7 @@ let pub={},me='',cur=null,mode='login',last=null,first=true,tab='home',tsTok='',
 const origin=()=>pub.base_url||location.origin;
 const ago=ts=>{const s=(Date.now()-new Date(ts))/1000;if(s<60)return 'now';if(s<3600)return Math.floor(s/60)+'m';if(s<86400)return Math.floor(s/3600)+'h';return Math.floor(s/86400)+'d'};
 const skel=n=>{const f=document.createDocumentFragment();for(let i=0;i<n;i++){const r=el('div','row-item static'),a=el('span','sk'),b=el('div','grow'),l1=el('div','sk'),l2=el('div','sk');a.style.cssText='width:44px;height:44px;border-radius:50%';l1.style.cssText='height:14px;width:50%;margin-bottom:8px';l2.style.cssText='height:12px;width:78%';b.append(l1,l2);r.append(a,b);f.append(r)}return f};
-const placeholder=()=>{const c=$('chatview');c.textContent='';c.append(el('p','chat-empty','Pick a chat to read it.'))};
+const placeholder=()=>{const c=$('chatview'),d=el('div','chat-empty');c.textContent='';d.innerHTML=ico('chat',44);d.append(el('b',null,'Select a chat'),el('span',null,'Pick a conversation from the list to read it and reply.'));c.append(d)};
 const TTL=[[1,'1 hour'],[6,'6 hours'],[24,'24 hours'],[72,'3 days'],[168,'7 days']];
 const ttlText=h=>(TTL.find(x=>x[0]===h)||[0,h+' hours'])[1];
 const te=new TextEncoder(),td=new TextDecoder();
@@ -45,9 +45,9 @@ $('lf').onsubmit=async e=>{e.preventDefault();if(busy)return;busy=true;$('lerr')
   busy=false};
 
 // ---------- tabs ----------
-function buildTabs(){const nav=$('tabbar');TABS.forEach(([k,t,i])=>{const b=el('button','tab');b.id='t-'+k;b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===tab));b.innerHTML=ico(i,24)+'<span>'+t+'</span>';b.onclick=()=>setTab(k);nav.append(b)})}
+function buildTabs(){const nav=$('tabbar'),br=el('div','side-brand');br.innerHTML='<img src="/static/logo-mark.svg" width="45" height="27" alt=""><span class="wm">allov<b>chat</b></span>';$('shell').prepend(br);document.body.dataset.tab=tab;TABS.forEach(([k,t,i])=>{const b=el('button','tab');b.id='t-'+k;b.setAttribute('role','tab');b.setAttribute('aria-selected',String(k===tab));b.innerHTML=ico(i,24)+'<span>'+t+'</span>';b.onclick=()=>setTab(k);nav.append(b)})}
 function setTab(k){if(k===tab)return;
-  vt(()=>{tab=k;TABS.forEach(([n])=>{$('tab-'+n).hidden=n!==k;$('t-'+n).setAttribute('aria-selected',String(n===k))});$('tabtitle').textContent=TABS.find(x=>x[0]===k)[1];scrollTo(0,0)});
+  vt(()=>{tab=k;document.body.dataset.tab=k;TABS.forEach(([n])=>{$('tab-'+n).hidden=n!==k;$('t-'+n).setAttribute('aria-selected',String(n===k))});$('tabtitle').textContent=TABS.find(x=>x[0]===k)[1];scrollTo(0,0)});
   const f={home:loadHome,links:loadLinks,settings:loadSettings}[k];if(f)f()}
 function setBadge(n){const t=$('t-chats');let b=t.querySelector('.badge');if(n>0){if(!b){b=el('span','badge');t.append(b)}b.textContent=n>99?'99+':n}else if(b)b.remove()}
 

@@ -1,12 +1,12 @@
 :root{--moss-ink:#07714F}
-.lp-hero{text-align:center;padding:clamp(40px,8vw,88px) 0 8px}
+.lp-hero{text-align:center;padding-block:clamp(40px,8vw,88px) 8px}
 .lp-pill{display:inline-flex;align-items:center;gap:8px;padding:7px 14px;border-radius:99px;background:var(--card);box-shadow:inset 0 0 0 1px var(--line);font-size:13px;font-weight:600;color:var(--mute)}
 .lp-pill i{width:8px;height:8px;border-radius:50%;background:var(--moss)}
 .lp-hero h1{font-size:clamp(36px,8vw,68px);line-height:1.03;letter-spacing:-.035em;max-width:15ch;margin:20px auto 16px}
 .lp-hero .lede{font-size:clamp(17px,2.4vw,20px);color:var(--mute);max-width:54ch;margin:0 auto 26px;line-height:1.55}
 .lp-hero .cta-row{display:flex;gap:12px;justify-content:center;flex-wrap:wrap}
 .lp-micro{margin:16px 0 0;font-size:14px;color:var(--mute)}
-.lp-sec{padding:clamp(44px,7vw,84px) 0 0}
+.lp-sec{padding-block:clamp(44px,7vw,84px) 0}
 .lp-h{text-align:center;max-width:640px;margin:0 auto 32px}
 .lp-h h2{font-size:clamp(28px,5vw,40px);letter-spacing:-.025em;line-height:1.1;margin:0 0 10px}
 .lp-h p{margin:0;color:var(--mute);font-size:17px;line-height:1.55}
