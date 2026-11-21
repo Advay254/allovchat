@@ -119,16 +119,22 @@ func (a *App) endSession(r *http.Request, cookie string) {
 // ownerID returns the signed-in account's id, or 0. This runs on almost every request, so a successful
 // lookup is kept for 20 seconds. Logging out, disabling or deleting an account clears the cache straight away.
 func (a *App) ownerID(r *http.Request) int64 {
-	c, err := r.Cookie("os")
-	if err != nil || len(c.Value) != 48 {
+	// A browser sends its cookie (session kind "owner"); the Android app sends a bearer token (kind "app").
+	tok, kind := "", "owner"
+	if c, err := r.Cookie("os"); err == nil && len(c.Value) == 48 {
+		tok = c.Value
+	} else if t := bearerToken(r); t != "" {
+		tok, kind = t, "app"
+	}
+	if tok == "" {
 		return 0
 	}
-	key := "s:" + sha256hex(c.Value)
+	key := "s:" + sha256hex(tok)
 	if v, ok := a.cache.get(key); ok {
 		return v.(int64)
 	}
 	var id int64
-	if a.db.QueryRow(r.Context(), `SELECT s.owner_id FROM sessions s JOIN owners o ON o.id=s.owner_id WHERE s.id=$1 AND s.kind='owner' AND s.expires_at>now() AND NOT o.disabled`, sha256hex(c.Value)).Scan(&id) != nil {
+	if a.db.QueryRow(r.Context(), `SELECT s.owner_id FROM sessions s JOIN owners o ON o.id=s.owner_id WHERE s.id=$1 AND s.kind=$2 AND s.expires_at>now() AND NOT o.disabled`, sha256hex(tok), kind).Scan(&id) != nil {
 		return 0
 	}
 	a.cache.set(key, id, 20*time.Second)
