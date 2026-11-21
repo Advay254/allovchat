@@ -181,8 +181,24 @@ func (a *App) guard(next http.Handler) http.Handler {
 			}
 		}()
 		p := r.URL.Path
+		// The Android app's WebView calls the API from its own origin with a bearer token, not a cookie, so it can't be
+		// used for cross-site request forgery. Only the exact allowed origins get these headers.
+		appCall := false
+		if o := r.Header.Get("Origin"); o != "" && strings.HasPrefix(p, "/api/") && appOriginOK(o) {
+			h.Set("Access-Control-Allow-Origin", o)
+			h.Set("Access-Control-Allow-Headers", "Authorization, Content-Type")
+			h.Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+			h.Set("Access-Control-Expose-Headers", "Retry-After")
+			h.Set("Access-Control-Max-Age", "600")
+			h.Add("Vary", "Origin")
+			if r.Method == http.MethodOptions {
+				w.WriteHeader(http.StatusNoContent)
+				return
+			}
+			appCall = hasBearer(r) || p == "/api/app/login"
+		}
 		if r.Method != http.MethodGet && r.Method != http.MethodHead && r.Method != http.MethodOptions {
-			if o := r.Header.Get("Origin"); o != "" {
+			if o := r.Header.Get("Origin"); o != "" && !appCall {
 				if u, err := url.Parse(o); err != nil || u.Host != r.Host {
 					a.errorPage(w, r, http.StatusForbidden, "That request was blocked.", "")
 					return
