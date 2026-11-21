@@ -207,7 +207,7 @@ func vapidPair(pub, priv string) bool {
 
 // notify queues a push for the person on side `to` ("o" owner or "v" guest) of chat tid. It never blocks the request.
 func (a *App) notify(tid int64, to, kind string) {
-	if a.push == nil || !a.push.on || !pushKinds[kind] || (to != "o" && to != "v") {
+	if a.push == nil || !pushKinds[kind] || (to != "o" && to != "v") {
 		return
 	}
 	a.push.schedule(tid, to, kind)
@@ -279,6 +279,11 @@ func (a *App) deliver(tid int64, to, kind string) {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
+	// Apps that are connected to the live event stream hear about it first, and this works even when web push is off.
+	a.appNotify(ctx, tid, to, kind, p.tag(tid, to))
+	if !p.on {
+		return
+	}
 	rows, err := a.db.Query(ctx, `SELECT s.id, s.endpoint, s.p256dh, s.auth, (s.thread_id IS NOT NULL), l.slug, l.quiet_start, l.quiet_end, l.tz
 		FROM threads t
 		JOIN links l ON l.id=t.link_id
@@ -359,6 +364,7 @@ func (a *App) pushRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/push/unsubscribe", a.pushUnsubscribeOwner)
 	mux.HandleFunc("POST /api/l/{slug}/push/subscribe", a.pushSubscribeGuest)
 	mux.HandleFunc("POST /api/l/{slug}/push/unsubscribe", a.pushUnsubscribeGuest)
+	a.appRoutes(mux)
 }
 
 // serviceWorker serves /sw.js from the root, so it covers the whole site. It is never cached, and it carries the build
