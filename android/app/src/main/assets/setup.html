@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Connect to your server</title>
+<link rel="stylesheet" href="/static/style.css">
+<link rel="stylesheet" href="/static/ui.css">
+<link rel="stylesheet" href="/static/app.css">
+</head>
+<body>
+<div class="auth">
+<form id="f" class="auth-card stag">
+<div class="logo"><img src="/static/logo-mark.svg" width="54" height="32" alt=""><span class="wm">allov<b>chat</b></span></div>
+<h1 class="ui-h">Connect to your server</h1>
+<p class="fine" style="margin:0">allovchat is open source, so every server is run by someone. Enter the address of yours, then sign in.</p>
+<label class="field">Server address<input id="srv" type="url" inputmode="url" autocapitalize="none" autocorrect="off" spellcheck="false" placeholder="https://chat.example.com" required></label>
+<label class="field">Username<input id="u" autocomplete="username" autocapitalize="none" required></label>
+<label class="field">Password<input id="p" type="password" autocomplete="current-password" required></label>
+<p id="err" class="err" role="alert" hidden></p>
+<button class="btn wide" id="go">Sign in</button>
+<p class="fine center" style="margin:0">No account yet? Create one on your server's website, then sign in here.</p>
+</form>
+</div>
+<script>
+const $ = (id) => document.getElementById(id);
+const A = window.AndroidApp;
+$('srv').value = (A && A.lastServer()) || '';
+const show = (m) => { $('err').textContent = m; $('err').hidden = false; };
+let busy = false;
+function lockout(sec) {
+  const b = $('go'); b.disabled = true; let s = sec;
+  const tick = () => { if (s <= 0) { b.disabled = false; b.textContent = 'Sign in'; $('err').hidden = true; return; } b.textContent = 'Try again in ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0'); s--; setTimeout(tick, 1000); };
+  show('Too many attempts. Please wait.'); tick();
+}
+$('f').onsubmit = async (e) => {
+  e.preventDefault(); if (busy) return; busy = true; $('err').hidden = true;
+  const b = $('go'); b.setAttribute('aria-busy', 'true');
+  try {
+    let url = $('srv').value.trim();
+    if (!/^[a-z]+:\/\//i.test(url)) url = 'https://' + url;
+    let u; try { u = new URL(url); } catch (x) { show('That does not look like a web address.'); return; }
+    if (u.protocol !== 'https:') { show('Use an address that starts with https://. The app only connects over a secure connection.'); return; }
+    url = u.origin;
+    let info; try { info = await (await fetch(url + '/api/public')).json(); } catch (x) { info = null; }
+    if (!info || !('registration_open' in info)) { show("Couldn't find an allovchat server at that address. Check it, and that this server is up to date."); return; }
+    let r, j = {};
+    try {
+      r = await fetch(url + '/api/app/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ username: $('u').value, password: $('p').value }) });
+      j = await r.json().catch(() => ({}));
+    } catch (x) { show("Couldn't reach the server. Check your connection."); return; }
+    if (r.ok && j.token) { A.saveSession(url, j.token); location.replace('/app'); return; }
+    if (r.status === 429 && j.retry_after) { lockout(j.retry_after); return; }
+    if (j.challenge) { show('This server asks for a human check after many failed attempts. Sign in on its website once, then try again here.'); return; }
+    show(j.error || 'Something went wrong. Please try again.');
+  } finally { b.removeAttribute('aria-busy'); busy = false; }
+};
+</script>
+</body>
+</html>
