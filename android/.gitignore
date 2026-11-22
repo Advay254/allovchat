@@ -1,0 +1,7 @@
+.gradle/
+build/
+local.properties
+*.jks
+*.keystore
+# The web interface is copied in from ../static when the app is built.
+app/src/main/assets/static/

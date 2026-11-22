@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">allovchat</string>
+    <string name="listening">Listening for new messages</string>
+    <string name="channel_messages">Messages and requests</string>
+    <string name="channel_connection">Background connection</string>
+</resources>
