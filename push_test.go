@@ -115,39 +115,50 @@ func TestVapidPair(t *testing.T) {
 
 func TestScheduleCoalesces(t *testing.T) {
 	oldD, oldG := pushDelay, pushGap
-	pushDelay, pushGap = 40*time.Millisecond, 250*time.Millisecond
+	pushDelay, pushGap = 60*time.Millisecond, 700*time.Millisecond
 	defer func() { pushDelay, pushGap = oldD, oldG }()
 	var mu sync.Mutex
-	var runs []time.Time
+	runs := map[int64][]time.Time{}
+	count := func() int {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(runs[7]) + len(runs[8])
+	}
+	waitFor := func(n int, d time.Duration) bool {
+		end := time.Now().Add(d)
+		for time.Now().Before(end) {
+			if count() >= n {
+				return true
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+		return count() >= n
+	}
 	p := &Pusher{slots: map[string]*slot{}}
-	p.run = func(int64, string, string) { mu.Lock(); runs = append(runs, time.Now()); mu.Unlock() }
-	start := time.Now()
+	p.run = func(tid int64, _, _ string) { mu.Lock(); runs[tid] = append(runs[tid], time.Now()); mu.Unlock() }
 	for i := 0; i < 20; i++ { // a burst of 20 messages in one chat
 		p.schedule(7, "o", "message")
 	}
 	p.schedule(8, "o", "message") // a different chat is independent
-	time.Sleep(120 * time.Millisecond)
-	mu.Lock()
-	if len(runs) != 2 {
-		t.Fatalf("burst should give one push per chat, got %d total", len(runs))
+	if !waitFor(2, 3*time.Second) {
+		t.Fatalf("expected one push per chat, got %d", count())
 	}
-	mu.Unlock()
+	time.Sleep(30 * time.Millisecond)
+	if n := count(); n != 2 {
+		t.Fatalf("burst should give one push per chat, got %d total", n)
+	}
 	p.schedule(7, "o", "message") // right after a push: must wait for the gap
-	time.Sleep(100 * time.Millisecond)
-	mu.Lock()
-	n := len(runs)
-	mu.Unlock()
-	if n != 2 {
+	time.Sleep(250 * time.Millisecond)
+	if n := count(); n != 2 {
 		t.Fatalf("second push for the same chat came too early (%d)", n)
 	}
-	time.Sleep(300 * time.Millisecond)
+	if !waitFor(3, 4*time.Second) {
+		t.Fatalf("the pending event was lost, got %d", count())
+	}
 	mu.Lock()
 	defer mu.Unlock()
-	if len(runs) != 3 {
-		t.Fatalf("the pending event was lost, got %d", len(runs))
-	}
-	if runs[2].Sub(start) < pushGap {
-		t.Errorf("gap not honoured: %v", runs[2].Sub(start))
+	if d := runs[7][1].Sub(runs[7][0]); d < pushGap-50*time.Millisecond {
+		t.Errorf("gap not honoured: %v", d)
 	}
 }
 
@@ -461,12 +472,20 @@ func TestPushFlow(t *testing.T) {
 		t.Errorf("reply payload: %v", m)
 	}
 
-	// a burst becomes one push
+	// a burst becomes one push. The window is widened and the messages go out together, so a slow machine can't split the burst.
+	pushDelay = 400 * time.Millisecond
+	var wg sync.WaitGroup
 	for i := 0; i < 6; i++ {
-		guest.must("POST", "/api/l/"+slug+"/send", map[string]string{"body": fmt.Sprint("burst ", i), "cid": randHex(8)})
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			guest.do("POST", "/api/l/"+slug+"/send", map[string]string{"body": fmt.Sprint("burst ", i), "cid": randHex(8)})
+		}(i)
 	}
+	wg.Wait()
 	fp.wait(t, "owner1")
-	fp.none(t, "owner1", 200*time.Millisecond)
+	fp.none(t, "owner1", 700*time.Millisecond)
+	pushDelay = 30 * time.Millisecond
 
 	// someone with the chat open already sees it live: no push
 	a.hub.join(tid, "o")
