@@ -14,7 +14,7 @@
 
   let regP = null;
   const reg = () => regP || (regP = navigator.serviceWorker.register('/sw.js', { scope: '/', updateViaCache: 'none' }).then(() => navigator.serviceWorker.ready));
-  if (sw) reg().catch(() => {}); // registering asks for nothing; it only enables the offline page and, later, alerts
+  if (sw && !window.AndroidApp) reg().catch(() => {}); // registering asks for nothing; it only enables the offline page and, later, alerts. The Android app has its own.
 
   const sub = async () => { if (!sw) return null; const r = await navigator.serviceWorker.getRegistration('/'); return r ? r.pushManager.getSubscription() : null; };
 

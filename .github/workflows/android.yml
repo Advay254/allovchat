@@ -7,6 +7,39 @@ on:
 permissions:
   contents: write
 jobs:
+  # Drives the real interface in a browser, the way the app uses it: sign-in screen, dashboard, chat, offline queue, sign-out.
+  flow:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: test
+          POSTGRES_PASSWORD: test
+          POSTGRES_DB: allovchat_flow
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: go build -o allovchat .
+      - run: npm install --prefix android/test --no-save puppeteer@23
+      - name: Sign in, open a chat, go offline, come back
+        env:
+          ALLOV_BIN: ./allovchat
+          DATABASE_URL: postgres://test:test@localhost:5432/allovchat_flow?sslmode=disable
+        run: node android/test/flow.mjs
+
   apk:
     runs-on: ubuntu-latest
     steps:
@@ -23,6 +56,10 @@ jobs:
         run: |
           mkdir -p android/app/src/main/assets/static
           cp -r static/. android/app/src/main/assets/static/
+      - name: Check the interface is bundled
+        run: bash android/check-assets.sh source
+      - name: Test the app's address mapping against the real files
+        run: gradle -p android testDebugUnitTest --no-daemon
       - name: Release signing key (optional)
         env:
           KS_B64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
@@ -43,6 +80,8 @@ jobs:
         run: gradle -p android assembleRelease --no-daemon
       - name: Name the APK
         run: cp android/app/build/outputs/apk/release/app-release.apk allovchat.apk
+      - name: Check the APK itself contains the interface
+        run: bash android/check-assets.sh apk allovchat.apk
       - uses: actions/upload-artifact@v4
         with:
           name: allovchat-apk

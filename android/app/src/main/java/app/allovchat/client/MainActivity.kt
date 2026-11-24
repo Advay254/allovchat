@@ -20,7 +20,6 @@ import androidx.activity.ComponentActivity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.core.content.ContextCompat
-import androidx.webkit.WebViewAssetLoader
 import java.io.IOException
 
 /**
@@ -29,7 +28,7 @@ import java.io.IOException
  */
 class MainActivity : ComponentActivity() {
     private lateinit var web: WebView
-    private lateinit var loader: WebViewAssetLoader
+    private lateinit var router: AssetRouter
 
     private val askNotifications = registerForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
         if (granted) startListening() else Session.setNotify(this, false)
@@ -39,10 +38,7 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         current = this
-        loader = WebViewAssetLoader.Builder()
-            .setDomain(HOST)
-            .addPathHandler("/static/", StaticHandler(this))
-            .build()
+        router = AssetRouter { name -> assetExists(name) }
 
         web = WebView(this)
         setContentView(web)
@@ -56,20 +52,40 @@ class MainActivity : ComponentActivity() {
         }
         web.addJavascriptInterface(Bridge(), "AndroidApp")
         web.webViewClient = object : WebViewClient() {
+            // Everything on the app's own host is answered from the APK. Returning null here would send the request to the
+            // network, and this host doesn't exist there. Other hosts (the user's server) return null and go out as normal.
             override fun shouldInterceptRequest(view: WebView, request: WebResourceRequest): WebResourceResponse? {
                 val u = request.url
-                if (u.host == HOST && u.path == "/app") {
-                    // One address, two screens: the sign-in form until there is a session, then the app.
-                    return page(if (Session.signedIn(this@MainActivity)) "app.html" else "setup.html")
+                if (u.host != HOST) return null
+                return when (val r = router.route(u.path ?: "/", Session.signedIn(this@MainActivity))) {
+                    is AssetRouter.Route.Asset -> try {
+                        WebResourceResponse(r.mime, if (r.mime.startsWith("text/")) "utf-8" else null, 200, "OK",
+                            mapOf("Cache-Control" to if (r.page) "no-store" else "no-cache"), assets.open(r.path))
+                    } catch (e: IOException) { notFound("${r.path} could not be read") }
+                    is AssetRouter.Route.Website -> notFound("Opens in your browser")
+                    is AssetRouter.Route.Missing -> notFound(r.reason)
                 }
-                return loader.shouldInterceptRequest(u)
             }
 
-            // Only the app's own pages load inside the app. Anything else opens in the browser.
+            // Only the app's own pages load inside the app. Pages of the website that aren't bundled open on the user's own
+            // server, and any other address opens in the browser.
             override fun shouldOverrideUrlLoading(view: WebView, request: WebResourceRequest): Boolean {
-                if (request.url.host == HOST) return false
-                try { startActivity(Intent(Intent.ACTION_VIEW, request.url)) } catch (e: Exception) {}
+                val u = request.url
+                var target = u
+                if (u.host == HOST) {
+                    val r = router.route(u.path ?: "/", Session.signedIn(this@MainActivity))
+                    if (r !is AssetRouter.Route.Website) return false
+                    val server = Session.server(this@MainActivity)
+                    if (server.isEmpty()) return true
+                    target = android.net.Uri.parse(server + r.path)
+                }
+                try { startActivity(Intent(Intent.ACTION_VIEW, target)) } catch (e: Exception) {}
                 return true
+            }
+
+            override fun onReceivedError(view: WebView, request: WebResourceRequest, error: android.webkit.WebResourceError) {
+                // The interface itself failed to load. Say so plainly instead of showing a browser error page.
+                if (request.isForMainFrame) view.loadDataWithBaseURL(null, errorPage(error.description.toString()), "text/html", "utf-8", null)
             }
         }
         onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
@@ -101,9 +117,13 @@ class MainActivity : ComponentActivity() {
         super.onDestroy()
     }
 
-    private fun page(name: String): WebResourceResponse? = try {
-        WebResourceResponse("text/html", "utf-8", 200, "OK", mapOf("Cache-Control" to "no-store"), assets.open(name))
-    } catch (e: IOException) { null }
+    private fun assetExists(name: String): Boolean = try { assets.open(name).close(); true } catch (e: IOException) { false }
+
+    private fun notFound(reason: String) = WebResourceResponse("text/plain", "utf-8", 404, "Not Found", emptyMap(), reason.byteInputStream())
+
+    private fun errorPage(detail: String) =
+        "<meta name=viewport content='width=device-width,initial-scale=1'><body style='font:16px sans-serif;padding:24px'><h2>Couldn't open the app</h2><p>The app's own interface failed to load, which should never need the internet.</p><p style='color:#666'>" +
+            android.text.TextUtils.htmlEncode(detail) + "</p>"
 
     private fun permissionOk() =
         Build.VERSION.SDK_INT < 33 || ContextCompat.checkSelfPermission(this, Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED
@@ -161,27 +181,6 @@ class MainActivity : ComponentActivity() {
                 Session.setNotify(this@MainActivity, false)
                 stopService(Intent(this@MainActivity, EventService::class.java))
             }
-        }
-    }
-
-    /** Serves the interface files bundled in assets/static/ at https://appassets.androidplatform.net/static/. */
-    private class StaticHandler(val ctx: Context) : WebViewAssetLoader.PathHandler {
-        override fun handle(path: String): WebResourceResponse? {
-            if (path.contains("..")) return null
-            return try {
-                val ext = path.substringAfterLast('.', "")
-                val mime = when (ext) {
-                    "js" -> "text/javascript"
-                    "css" -> "text/css"
-                    "svg" -> "image/svg+xml"
-                    "html" -> "text/html"
-                    "png" -> "image/png"
-                    "json" -> "application/json"
-                    "woff2" -> "font/woff2"
-                    else -> "application/octet-stream"
-                }
-                WebResourceResponse(mime, null, ctx.assets.open("static/$path"))
-            } catch (e: IOException) { null }
         }
     }
 

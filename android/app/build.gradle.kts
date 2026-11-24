@@ -48,6 +48,18 @@ android {
 dependencies {
     implementation("androidx.core:core-ktx:1.13.1")
     implementation("androidx.activity:activity:1.9.2")
-    implementation("androidx.webkit:webkit:1.11.0")
     implementation("androidx.work:work-runtime:2.9.1")
+    testImplementation("junit:junit:4.13.2")
 }
+
+// The interface is copied in from ../static before the build (see README). A build without it would open to an error, so refuse to build.
+val checkWebAssets = tasks.register("checkWebAssets") {
+    doLast {
+        val dir = file("src/main/assets/static")
+        val need = listOf("app.html", "app.js", "chat.js", "ui.js", "brand.js", "push.js", "native.js", "ux.js", "style.css", "ui.css", "app.css", "logo-mark.svg")
+        val missing = need.filter { !File(dir, it).exists() }
+        if (!File(dir, "../setup.html").exists()) throw GradleException("assets/setup.html is missing")
+        if (missing.isNotEmpty()) throw GradleException("The web interface is not bundled into the app. Missing in ${dir}: ${missing.joinToString()}. Copy ../static/. into it first (see android/README.md).")
+    }
+}
+tasks.matching { it.name == "preBuild" }.configureEach { dependsOn(checkWebAssets) }
