@@ -21,5 +21,14 @@ fi
 # Every file the two pages load must be there too.
 refs="$(grep -ohE '(src|href)="/static/[^"?#]+' "$here/../static/app.html" "$here/app/src/main/assets/setup.html" | sed -E 's#^(src|href)="/static/##' | sort -u)"
 for r in $refs; do need "static/$r"; done
+# The browser asks for the page icon on its own. If app.html points it at a server route
+# (for example /favicon.svg) instead of a bundled /static/ file, the app tries the network.
+icons="$(grep -oE '<link[^>]*rel="(shortcut )?icon"[^>]*' "$here/../static/app.html" | grep -oE 'href="[^"]+' | sed 's#^href="##' || true)"
+for i in $icons; do
+  case "$i" in
+    /static/*) ;;
+    *) echo "app.html icon points outside the bundle: $i (use a /static/ file)"; fail=1 ;;
+  esac
+done
 if [ "$fail" -ne 0 ]; then echo "The web interface is not fully bundled. Copy ../static/. into android/app/src/main/assets/static/ before building."; exit 1; fi
 echo "OK: the app contains its interface ($(wc -w <<<"$refs") referenced files checked)"
