@@ -49,6 +49,7 @@ func (a *App) featureRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("GET /api/stats", a.stats)
 	mux.HandleFunc("POST /api/l/{slug}/claim", a.claimChat)
 	mux.HandleFunc("POST /api/m/{id}/unclaim", a.unclaimChat)
+	a.vaultRoutes(mux)
 }
 
 func jsonCached(w http.ResponseWriter, v any, secs int) {
@@ -320,6 +321,8 @@ func (a *App) accountThread(w http.ResponseWriter, r *http.Request) (int64, stri
 }
 
 // claimChat attaches the caller's guest chat to their account. It is always the guest's own choice, and repeating it is harmless.
+// The request may carry the chat's key sealed with the account's master key. It is stored in the same step, so a chat
+// never ends up saved to an account while its key exists only in one browser.
 func (a *App) claimChat(w http.ResponseWriter, r *http.Request) {
 	tid, _, ok := a.visitorThread(w, r)
 	if !ok {
@@ -329,7 +332,24 @@ func (a *App) claimChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	ct, err := a.db.Exec(r.Context(), `UPDATE threads SET account_id=$2 WHERE id=$1 AND (account_id IS NULL OR account_id=$2) AND link_id NOT IN (SELECT id FROM links WHERE owner_id=$2)`, tid, oid)
+	var in struct {
+		Key string `json:"key"`
+	}
+	if !readJSON(w, r, &in) {
+		return
+	}
+	if in.Key != "" && !vaultBlobOK(in.Key) {
+		fail(w, 400, vaultBad)
+		return
+	}
+	ctx := r.Context()
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		a.fail500(w, "claim begin", err)
+		return
+	}
+	defer tx.Rollback(ctx)
+	ct, err := tx.Exec(ctx, `UPDATE threads SET account_id=$2 WHERE id=$1 AND (account_id IS NULL OR account_id=$2) AND link_id NOT IN (SELECT id FROM links WHERE owner_id=$2)`, tid, oid)
 	if err != nil {
 		a.fail500(w, "claim chat", err)
 		return
@@ -338,7 +358,21 @@ func (a *App) claimChat(w http.ResponseWriter, r *http.Request) {
 		fail(w, 409, "This chat can't be saved to your account")
 		return
 	}
-	jsonOut(w, 200, map[string]any{"ok": true})
+	if in.Key != "" {
+		if !vaultExists(ctx, tx, oid) {
+			fail(w, 409, "Set up your key vault first")
+			return
+		}
+		if stored, err := putVaultKey(ctx, tx, oid, "chat", tid, in.Key); err != nil || !stored {
+			a.fail500(w, "claim key", errors.New("key not stored"))
+			return
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		a.fail500(w, "claim commit", err)
+		return
+	}
+	jsonOut(w, 200, map[string]any{"ok": true, "id": tid})
 }
 
 func (a *App) unclaimChat(w http.ResponseWriter, r *http.Request) {
@@ -346,7 +380,9 @@ func (a *App) unclaimChat(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	a.exec(r.Context(), "unclaim chat", `UPDATE threads SET account_id=NULL WHERE id=$1`, tid)
+	ctx := r.Context()
+	a.exec(ctx, "unclaim chat", `UPDATE threads SET account_id=NULL WHERE id=$1`, tid)
+	a.exec(ctx, "unclaim vault key", `DELETE FROM vault_keys WHERE thread_id=$1 AND owner_id=$2`, tid, a.ownerID(r)) // the sealed key goes with the chat
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
