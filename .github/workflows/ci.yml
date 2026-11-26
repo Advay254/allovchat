@@ -44,3 +44,12 @@ jobs:
         env:
           TEST_DATABASE_URL: postgres://test:test@localhost:5432/allovchat_test?sslmode=disable
         run: go test -count=1 ./...
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Key vault end to end, with real WebCrypto
+        env:
+          DATABASE_URL: postgres://test:test@localhost:5432/allovchat_test?sslmode=disable
+        run: |
+          go build -o allovchat .
+          ALLOV_BIN=./allovchat node test/vault.mjs
