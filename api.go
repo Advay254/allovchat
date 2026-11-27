@@ -177,6 +177,7 @@ func (a *App) apiRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/l/{slug}/start", a.start)
 	a.threadRoutes(mux, "/api/l/{slug}", a.visitorThread)
 	a.featureRoutes(mux)
+	a.msgxRoutes(mux)
 	a.pushRoutes(mux)
 }
 
@@ -398,7 +399,7 @@ func (a *App) ownerAct(to string) http.HandlerFunc {
 		if serr != nil {
 			logErr("thread status", serr)
 		} else if to == "open" && ct.RowsAffected() > 0 {
-			a.notify(tid, "v", "accepted")
+			a.notifyMuteAware(tid, "v", "accepted")
 		}
 		if to == "blocked" {
 			a.exec(ctx, "block guest", `INSERT INTO blocks(owner_id, vid_hash) SELECT l.owner_id, t.vid_hash FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1 AND t.vid_hash<>'' ON CONFLICT DO NOTHING`, tid)
@@ -470,6 +471,11 @@ func (a *App) threadRoutes(mux *http.ServeMux, prefix string, res resolver) {
 	mux.HandleFunc("POST "+prefix+"/leave", h(a.leave))
 	mux.HandleFunc("POST "+prefix+"/privacy", h(a.setPrivacy))
 	mux.HandleFunc("POST "+prefix+"/retention", h(a.setRetention))
+	mux.HandleFunc("POST "+prefix+"/react", h(a.react))
+	mux.HandleFunc("POST "+prefix+"/unsend", h(a.unsend))
+	mux.HandleFunc("POST "+prefix+"/disappear", h(a.setDisappear))
+	mux.HandleFunc("POST "+prefix+"/attach", h(a.attachUpload))
+	mux.HandleFunc("GET "+prefix+"/attach/{aid}", h(a.attachDownload))
 }
 
 // ---------- guests ----------
@@ -600,7 +606,7 @@ func (a *App) start(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	a.setCookie(w, "v_"+slug, tok, 7*86400, false)
-	a.notify(tid, "o", "request")
+	a.notifyMuteAware(tid, "o", "request")
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
@@ -616,11 +622,11 @@ func (a *App) isPriv(ctx context.Context, tid int64, side string) bool {
 	return p
 }
 
-// presence tells the other person this side is online, unless this side is in privacy mode.
+// presence tells the other person this side is online, unless this side hides it (privacy mode or the account setting).
 func (a *App) presence(tid int64, side string) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 	defer cancel()
-	a.hub.pub(tid, map[string]any{"t": "presence", "side": side, "on": a.hub.conns(tid, side) > 0 && !a.isPriv(ctx, tid, side)})
+	a.hub.pub(tid, map[string]any{"t": "presence", "side": side, "on": a.hub.conns(tid, side) > 0 && a.sideOf(ctx, tid, side).Online})
 }
 
 // state returns everything a chat screen needs in two queries: the thread with its link, and the recent messages.
@@ -629,11 +635,12 @@ func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side stri
 	var alias, oalias, status, label, slug, lpub, pubv, oc, vc, areply string
 	var lid int64
 	var e2eOn, oa, va, po, pv bool
+	var dsecs int
 	var rev *time.Time
 	var exp time.Time
 	var acct *int64
 	var qs, qe, tz int
-	err := a.db.QueryRow(ctx, `SELECT t.alias,t.owner_alias,t.status,l.label,l.slug,l.id,l.pubkey,t.e2e,t.pub_v,t.owner_agreed,t.visitor_agreed,t.owner_contact,t.visitor_contact,t.revealed_at,t.priv_o,t.priv_v,t.expires_at,t.account_id,l.autoreply,l.quiet_start,l.quiet_end,l.tz FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1`, tid).Scan(&alias, &oalias, &status, &label, &slug, &lid, &lpub, &e2eOn, &pubv, &oa, &va, &oc, &vc, &rev, &po, &pv, &exp, &acct, &areply, &qs, &qe, &tz)
+	err := a.db.QueryRow(ctx, `SELECT t.alias,t.owner_alias,t.status,l.label,l.slug,l.id,l.pubkey,t.e2e,t.pub_v,t.owner_agreed,t.visitor_agreed,t.owner_contact,t.visitor_contact,t.revealed_at,t.priv_o,t.priv_v,t.expires_at,t.account_id,l.autoreply,l.quiet_start,l.quiet_end,l.tz,t.disappear_secs FROM threads t JOIN links l ON l.id=t.link_id WHERE t.id=$1`, tid).Scan(&alias, &oalias, &status, &label, &slug, &lid, &lpub, &e2eOn, &pubv, &oa, &va, &oc, &vc, &rev, &po, &pv, &exp, &acct, &areply, &qs, &qe, &tz, &dsecs)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			fail(w, 404, "Not found")
@@ -649,10 +656,18 @@ func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side stri
 			peer = label
 		}
 	}
-	if n, err := a.db.Exec(ctx, `UPDATE messages SET read_at=now() WHERE thread_id=$1 AND side=$2 AND read_at IS NULL`, tid, other); err == nil && n.RowsAffected() > 0 && !mine {
-		a.hub.pub(tid, map[string]any{"t": "read", "s": side}) // read receipts are only sent when this side isn't in privacy mode
+	_ = theirs
+	fo, fv := a.flags(ctx, tid) // what each side lets the other see: the chat's privacy mode and the person's own settings
+	myF, theirF := fo, fv
+	if side == "v" {
+		myF, theirF = fv, fo
 	}
-	msgs, err := a.rowsOut(ctx, `SELECT id, side, body, created_at AS ts, (read_at IS NOT NULL AND NOT $2::bool) AS is_read FROM (SELECT * FROM messages WHERE thread_id=$1 ORDER BY id DESC LIMIT 200) x ORDER BY id`, tid, theirs)
+	if n, err := a.db.Exec(ctx, `UPDATE messages SET read_at=now() WHERE thread_id=$1 AND side=$2 AND read_at IS NULL`, tid, other); err == nil && n.RowsAffected() > 0 && myF.Receipts {
+		a.hub.pub(tid, map[string]any{"t": "read", "s": side}) // read receipts are only sent when this side shares them
+	}
+	msgs, err := a.rowsOut(ctx, `SELECT id, side, body, created_at AS ts, (read_at IS NOT NULL AND NOT $2::bool) AS is_read, reply_to, (deleted_at IS NOT NULL) AS deleted, expires_at, attachment_id AS attach,
+		COALESCE((SELECT json_agg(json_build_object('side', r.side, 'body', r.body)) FROM reactions r WHERE r.message_id=x.id AND r.body<>''), '[]'::json) AS reactions
+		FROM (SELECT * FROM messages WHERE thread_id=$1 AND (expires_at IS NULL OR expires_at > now()) ORDER BY id DESC LIMIT 200) x ORDER BY id`, tid, !theirF.Receipts)
 	if err != nil {
 		a.fail500(w, "state messages", err)
 		return
@@ -662,7 +677,7 @@ func (a *App) state(w http.ResponseWriter, r *http.Request, tid int64, side stri
 		contact = "" // the other person's details are only ever sent after both agreed, and only for 24 hours
 	}
 	out := map[string]any{"peer": peer, "label": label, "slug": slug, "link_id": lid, "status": status, "side": side, "messages": msgs, "expires_at": exp,
-		"e2e": e2eOn, "gpub": pubv, "lpub": lpub, "privacy": mine, "online": a.hub.conns(tid, other) > 0 && !theirs, "saved": acct != nil,
+		"e2e": e2eOn, "gpub": pubv, "lpub": lpub, "privacy": mine, "online": a.hub.conns(tid, other) > 0 && theirF.Online, "saved": acct != nil, "disappear_secs": dsecs,
 		"reveal": map[string]any{"you": you, "they": they, "done": done, "contact": contact}}
 	if side == "v" {
 		if s := r.PathValue("slug"); s != "" {
@@ -716,7 +731,11 @@ func (a *App) stream(w http.ResponseWriter, r *http.Request, tid int64, side str
 // send is idempotent: the browser attaches a key (cid) to each message, and the database refuses a second
 // message with the same key in the same chat, so a retried request never posts twice.
 func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side string) {
-	var in struct{ Body, Cid string }
+	var in struct {
+		Body, Cid string
+		Reply     int64
+		Attach    string
+	}
 	if !readJSON(w, r, &in) {
 		return
 	}
@@ -760,9 +779,29 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 	if hexID.MatchString(in.Cid) {
 		cid = in.Cid
 	}
+	if in.Attach != "" && (!secure || !attachKeyRe.MatchString(in.Attach)) {
+		fail(w, 400, "That attachment couldn't be sent")
+		return
+	}
+	if in.Reply != 0 {
+		var n int
+		if in.Reply < 0 || a.db.QueryRow(ctx, `SELECT 1 FROM messages WHERE id=$1 AND thread_id=$2`, in.Reply, tid).Scan(&n) != nil {
+			fail(w, 400, "That reply couldn't be sent")
+			return
+		}
+	}
+	tx, err := a.db.Begin(ctx)
+	if err != nil {
+		a.fail500(w, "send begin", err)
+		return
+	}
+	defer tx.Rollback(ctx)
 	var id int64
 	var ts time.Time
-	err := a.db.QueryRow(ctx, `INSERT INTO messages(thread_id,side,body,cid) VALUES($1,$2,$3,NULLIF($4,'')) ON CONFLICT (thread_id, cid) WHERE cid IS NOT NULL DO NOTHING RETURNING id, created_at`, tid, side, b, cid).Scan(&id, &ts)
+	var exp *time.Time
+	err = tx.QueryRow(ctx, `INSERT INTO messages(thread_id,side,body,cid,reply_to,attachment_id,expires_at) VALUES($1,$2,$3,NULLIF($4,''),NULLIF($5::bigint,0),NULLIF($6,''),
+		(SELECT CASE WHEN disappear_secs>0 THEN now()+make_interval(secs => disappear_secs) END FROM threads WHERE id=$1)) ON CONFLICT (thread_id, cid) WHERE cid IS NOT NULL DO NOTHING RETURNING id, created_at, expires_at`,
+		tid, side, b, cid, in.Reply, in.Attach).Scan(&id, &ts, &exp)
 	if errors.Is(err, pgx.ErrNoRows) { // the same message was already stored
 		jsonOut(w, 200, map[string]any{"ok": true})
 		return
@@ -771,18 +810,33 @@ func (a *App) send(w http.ResponseWriter, r *http.Request, tid int64, side strin
 		a.fail500(w, "send", err)
 		return
 	}
+	if in.Attach != "" {
+		ct, err := tx.Exec(ctx, `UPDATE attachments SET attached=true WHERE id=$1 AND thread_id=$2 AND side=$3 AND NOT attached`, in.Attach, tid, side)
+		if err != nil {
+			a.fail500(w, "send attachment", err)
+			return
+		}
+		if ct.RowsAffected() == 0 {
+			fail(w, 400, "That attachment couldn't be sent")
+			return
+		}
+	}
+	if err = tx.Commit(ctx); err != nil {
+		a.fail500(w, "send commit", err)
+		return
+	}
 	a.exec(ctx, "touch thread", `UPDATE threads SET last_at=now() WHERE id=$1`, tid)
-	a.hub.pub(tid, map[string]any{"t": "msg", "id": id, "side": side, "body": b, "ts": ts, "cid": cid})
+	a.hub.pub(tid, map[string]any{"t": "msg", "id": id, "side": side, "body": b, "ts": ts, "cid": cid, "reply_to": in.Reply, "attach": in.Attach, "expires_at": exp})
 	to := "o"
 	if side == "o" {
 		to = "v"
 	}
-	a.notify(tid, to, "message")
+	a.notifyMuteAware(tid, to, "message")
 	jsonOut(w, 200, map[string]any{"ok": true})
 }
 
 func (a *App) typing(w http.ResponseWriter, r *http.Request, tid int64, side string) {
-	if a.rl.allow("ty:"+strconv.FormatInt(tid, 10)+side, 20, 10*time.Second) && !a.isPriv(r.Context(), tid, side) {
+	if a.rl.allow("ty:"+strconv.FormatInt(tid, 10)+side, 20, 10*time.Second) && a.sideOf(r.Context(), tid, side).Typing {
 		a.hub.pub(tid, map[string]any{"t": "typing", "side": side})
 	}
 	jsonOut(w, 200, map[string]any{"ok": true})
@@ -883,7 +937,7 @@ func (a *App) reveal(w http.ResponseWriter, r *http.Request, tid int64, side str
 			if side == "o" {
 				to = "v"
 			}
-			a.notify(tid, to, "reveal")
+			a.notifyMuteAware(tid, to, "reveal")
 		}
 	}
 	a.hub.pub(tid, map[string]any{"t": "reveal"})
