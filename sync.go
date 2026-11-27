@@ -112,15 +112,19 @@ func syncQuery(sel, from, where, alias string) string {
 
 var syncThreadsSQL = syncQuery(`t.id, CASE WHEN l.owner_id=$1 THEN 'owner' ELSE 'guest' END AS role,
 	CASE WHEN l.owner_id=$1 THEN t.alias WHEN t.owner_alias='' THEN l.label ELSE t.owner_alias END AS peer,
-	l.label, l.slug, l.id AS link_id, t.status, t.last_at, t.expires_at, t.e2e, t.pub_v AS gpub, l.pubkey AS lpub, t.revealed_at IS NOT NULL AS revealed,
+	l.label, l.slug, l.id AS link_id, t.status, t.last_at, t.expires_at, t.e2e, t.pub_v AS gpub, l.pubkey AS lpub, t.revealed_at IS NOT NULL AS revealed, t.disappear_secs, COALESCE(cp.pinned,false) AS pinned, COALESCE(cp.muted,false) AS muted,
 	(SELECT count(*) FROM messages m WHERE m.thread_id=t.id AND m.side = CASE WHEN l.owner_id=$1 THEN 'v' ELSE 'o' END AND m.read_at IS NULL) AS unread, t.seq`,
-	`threads t JOIN links l ON l.id=t.link_id`, `(l.owner_id=$1 OR t.account_id=$1) AND t.expires_at>now()`, "t")
+	`threads t JOIN links l ON l.id=t.link_id LEFT JOIN chat_prefs cp ON cp.thread_id=t.id AND cp.owner_id=$1`, `(l.owner_id=$1 OR t.account_id=$1) AND t.expires_at>now()`, "t")
 
-// A message's read flag follows the same privacy rule as the chat screen: if the other person turned privacy mode on,
-// the sender isn't told when their message was read.
+// A message's read flag follows the same rule as the chat screen: if the other person turned on privacy mode, or
+// turned off read receipts in their own settings, the sender isn't told when their message was read.
 var syncMessagesSQL = syncQuery(`m.id, m.thread_id, m.side, m.body, m.created_at AS ts, m.cid,
-	(m.read_at IS NOT NULL AND (m.side <> CASE WHEN l.owner_id=$1 THEN 'o' ELSE 'v' END OR NOT CASE WHEN l.owner_id=$1 THEN t.priv_v ELSE t.priv_o END)) AS read, m.seq`,
-	`messages m JOIN threads t ON t.id=m.thread_id JOIN links l ON l.id=t.link_id`, `(l.owner_id=$1 OR t.account_id=$1) AND t.expires_at>now()`, "m")
+	(m.read_at IS NOT NULL AND (m.side <> CASE WHEN l.owner_id=$1 THEN 'o' ELSE 'v' END OR NOT CASE
+		WHEN l.owner_id=$1 THEN (t.priv_v OR NOT COALESCE((SELECT receipts FROM prefs WHERE owner_id=t.account_id), true))
+		ELSE (t.priv_o OR NOT COALESCE((SELECT receipts FROM prefs WHERE owner_id=l.owner_id), true)) END)) AS read,
+	m.reply_to, (m.deleted_at IS NOT NULL) AS deleted, m.expires_at, m.attachment_id AS attach,
+	COALESCE((SELECT json_agg(json_build_object('side', r.side, 'body', r.body)) FROM reactions r WHERE r.message_id=m.id AND r.body<>''), '[]'::json) AS reactions, m.seq`,
+	`messages m JOIN threads t ON t.id=m.thread_id JOIN links l ON l.id=t.link_id`, `(l.owner_id=$1 OR t.account_id=$1) AND t.expires_at>now() AND (m.expires_at IS NULL OR m.expires_at > now())`, "m")
 
 // A removal is skipped if the chat is back and reachable (saved again after being removed), so a repeat can't undo that.
 var syncGoneSQL = syncQuery(`tb.thread_id, tb.link_id, tb.seq`, `tombstones tb`,
@@ -155,6 +159,12 @@ func (a *App) syncChanges(ctx context.Context, oid, from int64, limit int, overl
 	gone, err := rowsTx(ctx, tx, syncGoneSQL, oid, from, lo, limit)
 	if err != nil {
 		return nil, err
+	}
+	var prefs any
+	if pr, err := rowsTx(ctx, tx, `SELECT typing, receipts, online, notif_private FROM prefs WHERE owner_id=$1 AND (seq > $2 OR (seq > $3 AND changed_at > now() - interval '`+syncWindow+`'))`, oid, from, lo); err != nil {
+		return nil, err
+	} else if len(pr) > 0 {
+		prefs = pr[0]
 	}
 	// A page ends at the earliest point where any list was cut short, so nothing between pages is skipped.
 	hi, high, cut := int64(0), from, false
@@ -200,7 +210,7 @@ func (a *App) syncChanges(ctx context.Context, oid, from int64, limit int, overl
 			goneLinks = append(goneLinks, id)
 		}
 	}
-	return map[string]any{"cursor": high, "more": cut && high > from, "reset": false, "threads": threads, "messages": msgs, "gone": goneThreads, "gone_links": goneLinks}, nil
+	return map[string]any{"cursor": high, "more": cut && high > from, "reset": false, "threads": threads, "messages": msgs, "gone": goneThreads, "gone_links": goneLinks, "prefs": prefs}, nil
 }
 
 // syncGet is GET /api/sync?cursor=N&limit=N. Start with cursor 0, then keep asking with the cursor from the last answer
