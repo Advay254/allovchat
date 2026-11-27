@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -98,6 +99,7 @@ func (a *App) appRoutes(mux *http.ServeMux) {
 	mux.HandleFunc("POST /api/app/login", a.appLogin)
 	mux.HandleFunc("POST /api/app/logout", a.appLogout)
 	mux.HandleFunc("GET /api/app/events", a.appEvents)
+	a.syncRoutes(mux)
 }
 
 func (a *App) appLogin(w http.ResponseWriter, r *http.Request) {
@@ -173,6 +175,14 @@ func (a *App) appEvents(w http.ResponseWriter, r *http.Request) {
 	h.Set("X-Accel-Buffering", "no")
 	fmt.Fprint(w, "retry: 5000\n\n")
 	fl.Flush()
+	// A device that was disconnected passes the sync cursor it reached (Last-Event-ID or ?cursor=). If anything
+	// changed while it was away, it is told straight away, so a dropped connection never loses an update.
+	if c := firstNonEmpty(r.Header.Get("Last-Event-ID"), r.URL.Query().Get("cursor")); c != "" {
+		if n, err := strconv.ParseInt(c, 10, 64); err == nil && n >= 0 && a.syncHas(r.Context(), oid, n) {
+			fmt.Fprintf(w, "id: %d\ndata: {\"k\":\"sync\",\"g\":\"\"}\n\n", a.syncHead(r.Context()))
+			fl.Flush()
+		}
+	}
 	tk := time.NewTicker(25 * time.Second)
 	defer tk.Stop()
 	for {
@@ -180,7 +190,7 @@ func (a *App) appEvents(w http.ResponseWriter, r *http.Request) {
 		case <-r.Context().Done():
 			return
 		case m := <-ch:
-			fmt.Fprintf(w, "data: %s\n\n", m)
+			fmt.Fprintf(w, "id: %d\ndata: %s\n\n", a.syncHead(r.Context()), m) // the id is a sync position the device can resume from
 			fl.Flush()
 		case <-tk.C:
 			if a.ownerID(r) != oid { // signed out or disabled: end the stream so the app notices
@@ -207,4 +217,13 @@ func (a *App) appNotify(ctx context.Context, tid int64, to, kind, tag string) {
 		return
 	}
 	appHub.pub(*owner, fmt.Sprintf(`{"k":%q,"g":%q}`, kind, tag))
+}
+
+func firstNonEmpty(v ...string) string {
+	for _, s := range v {
+		if s != "" {
+			return s
+		}
+	}
+	return ""
 }
