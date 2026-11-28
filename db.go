@@ -78,7 +78,10 @@ func (a *App) migrate(ctx context.Context) error {
 			return err
 		}
 	}
-	_, err := a.db.Exec(ctx, syncSchema) // see sync.go
+	if _, err := a.db.Exec(ctx, syncSchema); err != nil { // see sync.go
+		return err
+	}
+	_, err := a.db.Exec(ctx, msgxSchema) // see msgx.go
 	return err
 }
 
@@ -167,6 +170,8 @@ func (a *App) janitor(ctx context.Context) {
 		a.exec(ctx, "janitor contacts", `UPDATE threads SET owner_contact='', visitor_contact='' WHERE revealed_at < now() - interval '24 hours' AND (owner_contact<>'' OR visitor_contact<>'')`)
 		a.exec(ctx, "janitor audit", `DELETE FROM audit WHERE created_at < now() - interval '180 days'`)
 		a.exec(ctx, "janitor sessions", `DELETE FROM sessions WHERE expires_at < now()`)
+		a.purgeExpiredMessages(ctx)
+		a.sweepAttachments(ctx)
 		a.exec(ctx, "janitor tombstones", `DELETE FROM tombstones WHERE changed_at < now() - interval '14 days'`)
 		select {
 		case <-ctx.Done():
